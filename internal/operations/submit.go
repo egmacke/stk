@@ -159,6 +159,12 @@ func openForge(env *Env, remote string) (*forge.GH, error) {
 	if err := gh.Available(); err != nil {
 		return nil, err
 	}
+	// Checked before the first push, not at the first pull request: a run that
+	// published a stack of branches and only then found it could not propose
+	// them would be a mess to unpick.
+	if err := gh.Authenticated(); err != nil {
+		return nil, err
+	}
 	return gh, nil
 }
 

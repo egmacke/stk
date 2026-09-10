@@ -52,6 +52,7 @@ func (r *repo) env() []string {
 		"PATH="+r.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GH_CALLS="+r.ghCalls(),
 		"GH_EXISTING="+r.ghExisting(),
+		"GH_UNAUTHENTICATED="+r.ghUnauthenticated(),
 		"HOME="+r.home,
 		"XDG_CONFIG_HOME="+filepath.Join(r.home, "config"),
 		"GIT_CONFIG_GLOBAL="+filepath.Join(r.home, "gitconfig"),
@@ -244,6 +245,17 @@ func (r *repo) ghCalls() string { return filepath.Join(r.bin, "gh-calls.log") }
 // ghExisting is the file the stub gh answers "gh pr list" from.
 func (r *repo) ghExisting() string { return filepath.Join(r.bin, "gh-existing.json") }
 
+// ghUnauthenticated is the file whose presence makes the stub gh refuse.
+func (r *repo) ghUnauthenticated() string { return filepath.Join(r.bin, "gh-logged-out") }
+
+// logOutGH makes the stub gh report that nobody is logged in.
+func (r *repo) logOutGH() {
+	r.t.Helper()
+	if err := os.WriteFile(r.ghUnauthenticated(), nil, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
 // stubGH puts a fake GitHub CLI on PATH. It records its arguments, answers
 // "pr list" from ghExisting (an empty list when that file is absent) and
 // answers "pr create" with a fixed pull request URL.
@@ -252,6 +264,13 @@ func (r *repo) stubGH() {
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$GH_CALLS"
 case "$1 $2" in
+"auth status")
+	if [ -f "$GH_UNAUTHENTICATED" ]; then
+		echo "gh: You are not logged into any GitHub hosts." >&2
+		exit 1
+	fi
+	echo "Logged in to github.com account tester"
+	;;
 "pr list")
 	if [ -f "$GH_EXISTING" ]; then cat "$GH_EXISTING"; else echo "[]"; fi
 	;;

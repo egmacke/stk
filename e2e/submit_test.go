@@ -203,6 +203,28 @@ func TestSubmitPullWithoutATerminalNeedsNoPrompt(t *testing.T) {
 	requireNotContains(t, remoteHeads(r), "refs/heads/api")
 }
 
+func TestSubmitChecksGitHubLoginBeforePushingAnything(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.logOutGH()
+
+	out := r.stkFail("submit", "--stack", "-p", "-n")
+	requireContains(t, out, "not logged in for github.com")
+	requireContains(t, out, "not logged into any GitHub hosts")
+	requireContains(t, out, "gh auth login --hostname github.com")
+	// The point of checking first: nothing was published.
+	heads := remoteHeads(r)
+	requireNotContains(t, heads, "refs/heads/api")
+	requireNotContains(t, heads, "refs/heads/service")
+	requireNotContains(t, r.ghCallLog(), "pr create")
+
+	// Pushing without --pull does not care about gh at all.
+	out = r.stk("submit", "--stack")
+	requireContains(t, out, "Pushed api to origin")
+}
+
 func TestSubmitRefusesTrunk(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
@@ -248,7 +270,10 @@ func TestSubmitDryRunPushesNothing(t *testing.T) {
 	requireContains(t, out, "1 pull request(s) would be opened")
 	requireContains(t, out, "nothing has been published")
 	requireNotContains(t, remoteHeads(r), "refs/heads/api")
-	requireEqual(t, r.ghCallLog(), "", "gh was never called")
+	// A dry run still verifies it could log in, and asks gh for nothing else.
+	requireContains(t, r.ghCallLog(), "auth status")
+	requireNotContains(t, r.ghCallLog(), "pr list")
+	requireNotContains(t, r.ghCallLog(), "pr create")
 }
 
 func TestSubmitRefusesWhileAnOperationIsPaused(t *testing.T) {

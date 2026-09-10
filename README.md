@@ -205,9 +205,24 @@ $ stk submit -p
     https://github.com/acme/tool/pull/42
 ```
 
-`gh` is needed only for `--pull`; pushing works without it. Nothing about a
-pull request is stored in the repository — `stk` keeps no PR numbers, no
-status and no token.
+`gh` is needed only for `--pull`; pushing works without it. Both that it is
+installed and that it is logged in to the remote's host are checked **before
+the first push**, so a run cannot publish a stack of branches and only then
+discover it cannot propose them:
+
+```console
+$ stk submit -sp
+stk: the GitHub CLI is not logged in for github.com
+
+    gh: You are not logged into any GitHub hosts.
+
+Log in with:
+
+    gh auth login --hostname github.com
+```
+
+Nothing about a pull request is stored in the repository — `stk` keeps no PR
+numbers, no status and no token.
 
 ## Status markers
 

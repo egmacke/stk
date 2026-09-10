@@ -13,6 +13,9 @@ import (
 // ErrNoCLI is returned when the GitHub CLI is not installed.
 var ErrNoCLI = errors.New("the GitHub CLI (gh) is not installed")
 
+// ErrNotAuthenticated is returned when gh holds no credentials for the host.
+var ErrNotAuthenticated = errors.New("the GitHub CLI is not logged in")
+
 // GH runs the GitHub CLI against one repository.
 type GH struct {
 	// Repo is passed to every call, so stk always acts on the repository
@@ -26,9 +29,6 @@ type GH struct {
 }
 
 // Available reports whether gh can be run at all.
-//
-// Authentication is deliberately not checked here: gh's own error names the
-// host and the command to fix it, and stk should not paraphrase it.
 func (g *GH) Available() error {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("%w\n\nInstall it from https://cli.github.com, then run:\n\n    gh auth login", ErrNoCLI)
@@ -36,9 +36,47 @@ func (g *GH) Available() error {
 	return nil
 }
 
+// Authenticated reports whether gh holds credentials for this repository's
+// host.
+//
+// Callers check it before publishing anything, so a run cannot push a stack of
+// branches and only then discover it cannot open a pull request. gh's own
+// message is relayed rather than paraphrased: it knows which of the several
+// ways of logging in went wrong.
+func (g *GH) Authenticated() error {
+	host := g.host()
+	if _, err := g.exec("auth", "status", "--hostname", host); err != nil {
+		return fmt.Errorf("%w for %s\n\n%s\n\nLog in with:\n\n    gh auth login --hostname %s",
+			ErrNotAuthenticated, host, indent(err.Error()), host)
+	}
+	return nil
+}
+
+func (g *GH) host() string {
+	if g.Repo.Host == "" {
+		return "github.com"
+	}
+	return g.Repo.Host
+}
+
+// indent offsets a relayed message so it reads as quoted rather than as stk's
+// own words.
+func indent(msg string) string {
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(msg), "\n") {
+		out = append(out, "    "+line)
+	}
+	return strings.Join(out, "\n")
+}
+
 // run invokes "gh <group> <verb> --repo <repo> <args...>".
 func (g *GH) run(group, verb string, args ...string) (string, error) {
 	full := append([]string{group, verb, "--repo", g.Repo.String()}, args...)
+	return g.exec(full...)
+}
+
+// exec runs gh verbatim, for the calls that take no --repo.
+func (g *GH) exec(full ...string) (string, error) {
 	if g.Verbose && g.Log != nil {
 		fmt.Fprintf(g.Log, "+ gh %s\n", strings.Join(full, " "))
 	}

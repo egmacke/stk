@@ -16,7 +16,7 @@ func newSubmitCmd() *cobra.Command {
 	var pull, draft, noPrompt, wholeStack, noComment bool
 	cmd := &cobra.Command{
 		Use:     "submit [branch]",
-		Aliases: []string{"ss"},
+		Aliases: []string{"s", "ss"},
 		Short:   "Push a branch to the remote and optionally open a pull request",
 		Long: "Pushes the branch to the configured remote, creating it there when it does\n" +
 			"not exist yet. A branch a restack has rewritten is pushed with\n" +
@@ -29,9 +29,9 @@ func newSubmitCmd() *cobra.Command {
 			"exactly as it is.\n\n" +
 			"Each pull request of the stack carries one stk comment listing the whole\n" +
 			"chain in order, rewritten in place as the stack changes.\n\n" +
-			"stk ss is stk submit --stack: it refreshes every branch of the stack at\n" +
-			"once. Every other flag still applies, so stk ss -pn proposes the whole\n" +
-			"stack without asking anything.\n\n" +
+			"stk s is this command; stk ss is stk submit --stack, which refreshes every\n" +
+			"branch of the stack at once. Every other flag still applies, so stk ss -pn\n" +
+			"proposes the whole stack without asking anything.\n\n" +
 			"stk submit never merges and never deletes anything.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: branchNameCompletion,

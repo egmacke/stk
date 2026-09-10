@@ -23,7 +23,13 @@ func Execute(args []string) int {
 	root.InitDefaultCompletionCmd()
 	root.InitDefaultHelpCmd()
 
-	if name, ok := firstNonFlag(args); ok && !isKnown(root, name) {
+	name, escaped, ok := firstNonFlag(args)
+	switch {
+	case escaped:
+		// A bare "--" before the subcommand forces the rest of the line to
+		// git, so an stk alias can never shadow a git command permanently.
+		return passthrough(args)
+	case ok && !isKnown(root, name):
 		return passthrough(args)
 	}
 
@@ -46,14 +52,15 @@ func Execute(args []string) int {
 var globalFlagsWithValue = map[string]bool{"--cwd": true}
 
 // firstNonFlag finds the token that names the subcommand.
-func firstNonFlag(args []string) (string, bool) {
+//
+// escaped reports a bare "--" in the leading flag region, which the user
+// writes to force the rest of the line through to git regardless of what stk
+// calls that name.
+func firstNonFlag(args []string) (name string, escaped bool, ok bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
-			if i+1 < len(args) {
-				return args[i+1], true
-			}
-			return "", false
+			return "", true, false
 		}
 		if strings.HasPrefix(a, "-") {
 			if globalFlagsWithValue[a] {
@@ -61,9 +68,9 @@ func firstNonFlag(args []string) (string, bool) {
 			}
 			continue
 		}
-		return a, true
+		return a, false, true
 	}
-	return "", false
+	return "", false, false
 }
 
 // isKnown reports whether the name matches a native stk command or alias.
@@ -112,6 +119,10 @@ func passthrough(args []string) int {
 		a := args[i]
 		if !strings.HasPrefix(a, "-") {
 			break
+		}
+		if a == "--" {
+			// The escape marker itself is stk syntax, not a git argument.
+			continue
 		}
 		name, value, hasValue := strings.Cut(a, "=")
 		switch {

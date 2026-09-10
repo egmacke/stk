@@ -63,7 +63,14 @@ func NewRoot() *cobra.Command {
 		Long: "stk adds persistent parent/child relationships between git branches.\n\n" +
 			"Git remains the source of truth: every branch, commit and rebase is an\n" +
 			"ordinary git construct, and any command stk does not implement is passed\n" +
-			"straight through to git.",
+			"straight through to git.\n\n" +
+			"Short forms:\n" +
+			"  c    create       co   checkout     r    restack\n" +
+			"  tr   track        utr  untrack      rn   rename\n" +
+			"  cont continue     ab   abort\n\n" +
+			"A short form is a native stk command and always wins over git. To reach\n" +
+			"a git command of the same name, put -- first:\n\n" +
+			"  stk -- r          runs: git r",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

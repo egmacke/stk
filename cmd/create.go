@@ -10,8 +10,9 @@ func newCreateCmd() *cobra.Command {
 	var from string
 	var noCheckout bool
 	cmd := &cobra.Command{
-		Use:   "create <branch>",
-		Short: "Create a branch and record its place in the stack",
+		Use:     "create <branch>",
+		Aliases: []string{"c"},
+		Short:   "Create a branch and record its place in the stack",
 		Long: "Creates a branch whose logical parent is the current branch, or the branch\n" +
 			"named by --from.\n\n" +
 			"The branch is created from the parent's ref rather than by checking the\n" +

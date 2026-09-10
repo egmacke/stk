@@ -10,10 +10,11 @@ import (
 
 func newContinueCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "continue",
-		Short: "Resume a restack that stopped on a conflict",
-		Long:  "Continues with the scope the operation began with, not just the branch that conflicted.",
-		Args:  cobra.NoArgs,
+		Use:     "continue",
+		Aliases: []string{"cont"},
+		Short:   "Resume a restack that stopped on a conflict",
+		Long:    "Continues with the scope the operation began with, not just the branch that conflicted.",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
@@ -30,9 +31,10 @@ func newContinueCmd() *cobra.Command {
 
 func newAbortCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "abort",
-		Short: "Abandon the in-flight stk operation and restore the original branches",
-		Args:  cobra.NoArgs,
+		Use:     "abort",
+		Aliases: []string{"ab"},
+		Short:   "Abandon the in-flight stk operation and restore the original branches",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {

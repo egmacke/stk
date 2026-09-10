@@ -10,8 +10,9 @@ import (
 
 func newRenameCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "rename [old-name] <new-name>",
-		Short: "Rename a branch without breaking the stack",
+		Use:     "rename [old-name] <new-name>",
+		Aliases: []string{"rn"},
+		Short:   "Rename a branch without breaking the stack",
 		Long: "Stack relationships are keyed by stable ids, so renaming a branch leaves\n" +
 			"parents and children untouched. The remote branch is never renamed or\n" +
 			"deleted.",

@@ -11,8 +11,9 @@ import (
 func newTrackCmd() *cobra.Command {
 	var parent string
 	cmd := &cobra.Command{
-		Use:   "track [branch] --parent <branch>",
-		Short: "Bring an existing branch into the stack graph",
+		Use:     "track [branch] --parent <branch>",
+		Aliases: []string{"tr"},
+		Short:   "Bring an existing branch into the stack graph",
 		Long: "The parent must be trunk or a branch stk already tracks. The initial base\n" +
 			"is the merge base of the two branches. stk never infers a parent on its own.",
 		Args: cobra.MaximumNArgs(1),
@@ -41,9 +42,10 @@ func newUntrackCmd() *cobra.Command {
 	var recursive bool
 	var reparent string
 	cmd := &cobra.Command{
-		Use:   "untrack [branch]",
-		Short: "Remove stack metadata, leaving the git branch alone",
-		Args:  cobra.MaximumNArgs(1),
+		Use:     "untrack [branch]",
+		Aliases: []string{"utr"},
+		Short:   "Remove stack metadata, leaving the git branch alone",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {

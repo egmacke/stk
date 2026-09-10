@@ -12,8 +12,9 @@ import (
 func newRestackCmd() *cobra.Command {
 	var up, only, rebaseMerges bool
 	cmd := &cobra.Command{
-		Use:   "restack",
-		Short: "Rebase branches onto their parents so the stack is consistent",
+		Use:     "restack",
+		Aliases: []string{"r"},
+		Short:   "Rebase branches onto their parents so the stack is consistent",
 		Long: "By default stk restacks the entire stack containing the current branch,\n" +
 			"starting at the lowest branch above trunk and processing every descendant\n" +
 			"in dependency order.\n\n" +

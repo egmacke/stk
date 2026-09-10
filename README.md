@@ -84,6 +84,36 @@ stk status          # runs: git status
 stk commit -am foo  # runs: git commit -am foo
 ```
 
+### Short forms
+
+| Short | Command | Short | Command |
+| --- | --- | --- | --- |
+| `c` | `create` | `co` | `checkout` |
+| `r` | `restack` | `tr` | `track` |
+| `utr` | `untrack` | `rn` | `rename` |
+| `cont` | `continue` | `ab` | `abort` |
+
+```bash
+stk c sc-123/api
+stk r --up
+stk cont
+```
+
+A short form is a native stk command and always wins over the git passthrough,
+including over a git alias of the same name. To reach a git command that shares
+a name, put `--` first:
+
+```bash
+stk -- r            # runs: git r
+stk -- log --oneline
+```
+
+Only these eight names are claimed. Everything else stays available to git, so
+`stk mv`, `stk st`, `stk s` and any git alias of yours still pass straight
+through. There is no prefix matching: `stk resta` is a git command, not
+`restack`. User-defined aliases remain a phase-two item; write shell or git
+aliases in the meantime.
+
 ### Restack scope
 
 `stk restack` repairs the **whole logical stack**, not just the path you are

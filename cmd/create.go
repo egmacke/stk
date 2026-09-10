@@ -1,0 +1,37 @@
+package cmd
+
+import (
+	"github.com/spf13/cobra"
+
+	"stk/internal/operations"
+)
+
+func newCreateCmd() *cobra.Command {
+	var from string
+	var noCheckout bool
+	cmd := &cobra.Command{
+		Use:   "create <branch>",
+		Short: "Create a branch and record its place in the stack",
+		Long: "Creates a branch whose logical parent is the current branch, or the branch\n" +
+			"named by --from.\n\n" +
+			"The branch is created from the parent's ref rather than by checking the\n" +
+			"parent out, so --from works even when the parent is checked out in another\n" +
+			"worktree.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := open()
+			if err != nil {
+				return err
+			}
+			return operations.Create(a.Env, a.Graph, operations.CreateOptions{
+				Name:     args[0],
+				From:     from,
+				Checkout: !noCheckout,
+			})
+		},
+	}
+	cmd.Flags().StringVarP(&from, "from", "f", "", "parent `branch` (defaults to the current branch)")
+	cmd.Flags().BoolVar(&noCheckout, "no-checkout", false, "create the branch without switching to it")
+	_ = cmd.RegisterFlagCompletionFunc("from", branchNameCompletion)
+	return cmd
+}

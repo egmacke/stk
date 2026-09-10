@@ -1,0 +1,303 @@
+// Package e2e drives the compiled stk binary against real temporary git
+// repositories. Nothing here stubs git out: the point is to check the actual
+// commit graph and the actual stk metadata after each operation.
+package e2e
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+var stkBin string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "stk-build-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(dir)
+
+	stkBin = filepath.Join(dir, "stk")
+	build := exec.Command("go", "build", "-o", stkBin, "..")
+	build.Stdout = os.Stderr
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "building stk: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
+// repo is one temporary git repository under test.
+type repo struct {
+	t      *testing.T
+	Root   string
+	Origin string
+	home   string
+}
+
+// env returns a hermetic environment: no user or system git config, a fixed
+// identity, and no editor or pager that could block.
+func (r *repo) env() []string {
+	return append(os.Environ(),
+		"HOME="+r.home,
+		"XDG_CONFIG_HOME="+filepath.Join(r.home, "config"),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(r.home, "gitconfig"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(r.home, "gitconfig-system"),
+		"GIT_AUTHOR_NAME=stk test",
+		"GIT_AUTHOR_EMAIL=test@example.invalid",
+		"GIT_COMMITTER_NAME=stk test",
+		"GIT_COMMITTER_EMAIL=test@example.invalid",
+		"GIT_EDITOR=true",
+		"GIT_PAGER=cat",
+		"EDITOR=true",
+		"TERM=dumb",
+		"NO_COLOR=1",
+	)
+}
+
+type result struct {
+	Stdout string
+	Stderr string
+	Code   int
+}
+
+// All returns stdout and stderr together, for assertions that do not care
+// which stream a message used.
+func (res result) All() string { return res.Stdout + res.Stderr }
+
+func (r *repo) runIn(dir, stdin string, name string, args ...string) result {
+	r.t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = r.env()
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		var ee *exec.ExitError
+		if ok := asExitError(err, &ee); ok {
+			code = ee.ExitCode()
+		} else {
+			r.t.Fatalf("running %s %v: %v", name, args, err)
+		}
+	}
+	return result{Stdout: out.String(), Stderr: errOut.String(), Code: code}
+}
+
+func asExitError(err error, target **exec.ExitError) bool {
+	if ee, ok := err.(*exec.ExitError); ok {
+		*target = ee
+		return true
+	}
+	return false
+}
+
+// stkAt runs stk in a specific directory without asserting the exit code.
+func (r *repo) stkAt(dir, stdin string, args ...string) result {
+	r.t.Helper()
+	full := append([]string{"--no-color"}, args...)
+	return r.runIn(dir, stdin, stkBin, full...)
+}
+
+// stk runs stk in the repository root and fails the test on a non-zero exit.
+func (r *repo) stk(args ...string) string {
+	r.t.Helper()
+	res := r.stkAt(r.Root, "", args...)
+	if res.Code != 0 {
+		r.t.Fatalf("stk %s failed (%d)\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "), res.Code, res.Stdout, res.Stderr)
+	}
+	return res.Stdout
+}
+
+// stkFail runs stk expecting a non-zero exit and returns the combined output.
+func (r *repo) stkFail(args ...string) string {
+	r.t.Helper()
+	res := r.stkAt(r.Root, "", args...)
+	if res.Code == 0 {
+		r.t.Fatalf("stk %s unexpectedly succeeded\nstdout:\n%s", strings.Join(args, " "), res.Stdout)
+	}
+	return res.All()
+}
+
+// git runs git in the repository root and fails the test on a non-zero exit.
+func (r *repo) git(args ...string) string {
+	r.t.Helper()
+	return r.gitAt(r.Root, args...)
+}
+
+func (r *repo) gitAt(dir string, args ...string) string {
+	r.t.Helper()
+	res := r.runIn(dir, "", "git", args...)
+	if res.Code != 0 {
+		r.t.Fatalf("git %s failed in %s (%d)\n%s%s",
+			strings.Join(args, " "), dir, res.Code, res.Stdout, res.Stderr)
+	}
+	return strings.TrimRight(res.Stdout, "\n")
+}
+
+// write puts content in a file relative to the repository root.
+func (r *repo) write(rel, content string) {
+	r.t.Helper()
+	path := filepath.Join(r.Root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// commit writes a file and commits it.
+func (r *repo) commit(rel, content, message string) {
+	r.t.Helper()
+	r.write(rel, content)
+	r.git("add", "-A")
+	r.git("commit", "-q", "-m", message)
+}
+
+// amend rewrites the tip commit with new file content.
+func (r *repo) amend(rel, content, message string) {
+	r.t.Helper()
+	r.write(rel, content)
+	r.git("add", "-A")
+	r.git("commit", "-q", "--amend", "-m", message)
+}
+
+func (r *repo) sha(rev string) string {
+	r.t.Helper()
+	return r.git("rev-parse", rev)
+}
+
+// parentOf reads the recorded stack parent of a branch.
+func (r *repo) parentOf(branch string) string {
+	r.t.Helper()
+	return strings.TrimSpace(r.stk("parent", branch))
+}
+
+// baseOf reads the protected base ref of a branch.
+func (r *repo) baseOf(branch string) string {
+	r.t.Helper()
+	id := r.git("config", "--local", "--get", "branch."+branch+".stk-id")
+	return r.git("rev-parse", "refs/stk/base/"+id)
+}
+
+// tracked reports whether stk has metadata for a branch.
+func (r *repo) tracked(branch string) bool {
+	r.t.Helper()
+	res := r.runIn(r.Root, "", "git", "config", "--local", "--get", "branch."+branch+".stk-id")
+	return res.Code == 0
+}
+
+func (r *repo) branchExists(branch string) bool {
+	r.t.Helper()
+	res := r.runIn(r.Root, "", "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return res.Code == 0
+}
+
+func (r *repo) currentBranch() string {
+	r.t.Helper()
+	return r.git("symbolic-ref", "--short", "HEAD")
+}
+
+// log returns the first-parent commit subjects of a branch, newest first.
+func (r *repo) log(branch string) []string {
+	r.t.Helper()
+	out := r.git("log", "--format=%s", branch)
+	if out == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
+}
+
+// newRepo creates a repository with one commit on main, initialised for stk.
+func newRepo(t *testing.T) *repo {
+	t.Helper()
+	base := t.TempDir()
+	r := &repo{t: t, Root: filepath.Join(base, "repo"), home: filepath.Join(base, "home")}
+	mkdirAll(t, r.Root, r.home)
+	r.gitAt(r.Root, "init", "-q", "-b", "main", ".")
+	r.commit("README.md", "hello\n", "init")
+	r.stk("--no-interactive", "init")
+	return r
+}
+
+// newRepoWithRemote creates a bare origin and a clone initialised for stk.
+func newRepoWithRemote(t *testing.T) *repo {
+	t.Helper()
+	base := t.TempDir()
+	r := &repo{
+		t:      t,
+		Root:   filepath.Join(base, "repo"),
+		Origin: filepath.Join(base, "origin.git"),
+		home:   filepath.Join(base, "home"),
+	}
+	mkdirAll(t, r.Origin, r.home)
+	r.gitAt(r.Origin, "init", "-q", "-b", "main", "--bare", ".")
+	r.runIn(base, "", "git", "clone", "-q", r.Origin, r.Root)
+	r.commit("README.md", "hello\n", "init")
+	r.git("push", "-q", "-u", "origin", "main")
+	r.stk("--no-interactive", "init")
+	return r
+}
+
+func mkdirAll(t *testing.T, dirs ...string) {
+	t.Helper()
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// addWorktree creates a linked worktree checked out at branch.
+func (r *repo) addWorktree(name, branch string) string {
+	r.t.Helper()
+	path := filepath.Join(filepath.Dir(r.Root), name)
+	r.git("worktree", "add", "-q", path, branch)
+	return path
+}
+
+// stackText normalises the rendered stack for comparison.
+func (r *repo) stackText(args ...string) string {
+	r.t.Helper()
+	out := r.stk(append([]string{"stack"}, args...)...)
+	var lines []string
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		lines = append(lines, strings.TrimRight(line, " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func requireContains(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if !strings.Contains(haystack, needle) {
+		t.Fatalf("expected output to contain %q, got:\n%s", needle, haystack)
+	}
+}
+
+func requireNotContains(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if strings.Contains(haystack, needle) {
+		t.Fatalf("expected output not to contain %q, got:\n%s", needle, haystack)
+	}
+}
+
+func requireEqual[T comparable](t *testing.T, got, want T, what string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s: got %v, want %v", what, got, want)
+	}
+}

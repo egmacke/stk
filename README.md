@@ -194,6 +194,7 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | `--draft` | `-d` | open every new pull request as a draft |
 | `--draft-from <branch>` | | open that branch and everything above it as drafts |
 | `--draft-branch <branch>` | | open just that branch as a draft; repeatable |
+| `--update` | `-u` | refresh the pull requests that already exist; open none |
 | `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
 | `--no-comment` | | leave the stack comment on each pull request alone |
@@ -208,6 +209,32 @@ commits; press enter to accept an offer. Without a terminal, `--pull` needs
 A pull request cannot be based on a branch the remote does not have, so
 ancestors that have never been pushed are pushed first — they are not
 proposed, only published. `--stack` is what proposes the whole chain.
+
+### Refreshing without proposing
+
+`--update` (`-u`) pushes and brings the pull requests that already exist up to
+date, but never opens one. It is the shape of a republish after a restack:
+
+```console
+$ stk ss -u
+✓ Pushed sc-123/api to origin (forced)
+✓ Pull request #1 was refreshed for sc-123/api
+    https://github.com/acme/tool/pull/1
+✓ Pushed sc-123/service to origin (forced)
+✓ Pull request #2 was refreshed for sc-123/service
+⊘ sc-123/ui has no pull request; --update opens none
+
+3 branch(es) pushed, 2 pull request(s) refreshed.
+```
+
+Because nothing is opened, there is nothing to ask about: no title, no body,
+no draft question, so `-u` needs no terminal and no `-n`. It also pushes only
+the branches in scope — a plain `stk submit` publishes unpushed ancestors so a
+new pull request has a base, and with `--update` there is no new pull request
+to give one. A draft flag alongside `-u` is an error rather than a no-op.
+
+`stk` says which of the two things happened to each pull request: *refreshed*
+when the push moved the branch under it, *already open* when nothing moved.
 
 ### Ready and draft
 
@@ -423,6 +450,7 @@ move     -o --onto
 fold     -s --stack        -y --yes
 restack  -u --up           -o --only
 submit   -p --pull         -d --draft       -n --no-prompt   -s --stack
+         -u --update
 ready    -s --stack
 sync     -s --stack
 stack    -a --all          -l --legend      -j --json

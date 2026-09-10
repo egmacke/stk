@@ -204,6 +204,64 @@ func TestSubmitDraftFlagsNameARealBranch(t *testing.T) {
 	requireNotContains(t, r.ghCallLog(), "pr create")
 }
 
+func TestSubmitUpdateRefreshesOnlyWhatIsAlreadyOpen(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	// Only the bottom two are proposed; ui is pushed but has no pull request.
+	r.stk("submit", "api", "-pn")
+	r.stk("submit", "service", "-pn")
+
+	r.stk("checkout", "api")
+	r.amend("api.txt", "api amended\n", "api amended")
+	r.stk("restack")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Pushed api to origin (forced)")
+	requireContains(t, out, "Pull request #1 was refreshed for api")
+	requireContains(t, out, "Pull request #2 was refreshed for service")
+	requireContains(t, out, "ui has no pull request; --update opens none")
+	requireContains(t, out, "2 pull request(s) refreshed")
+	// The point of --update: nothing new is proposed. Looking ui up is fine;
+	// creating anything for it is not.
+	requireNotContains(t, r.ghCallLog(), "pr create --repo example/repo --head ui")
+	requireEqual(t, len(r.ghStubState().PRs), 2, "still two pull requests")
+}
+
+func TestSubmitUpdateNeedsNoTerminalAndNoDraftChoice(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+
+	// No prompting is possible, and none is needed. Nothing has moved since
+	// the last submit, so nothing claims to have been refreshed either.
+	out := r.stk("--no-interactive", "ss", "-u")
+	requireContains(t, out, "Pull request #1 is already open for api")
+	requireContains(t, out, "Nothing to push.")
+	requireNotContains(t, out, "Ready for review up to")
+
+	out = r.stkFail("ss", "-u", "-d")
+	requireContains(t, out, "--update opens no pull request")
+}
+
+func TestSubmitUpdateDoesNotPublishAncestors(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	// service alone, with nothing on the remote yet: --update pushes only the
+	// branch named, because no pull request needs a base.
+	out := r.stk("submit", "service", "-u")
+	requireContains(t, out, "Pushed service to origin (created)")
+	requireNotContains(t, out, "Pushed api")
+	requireNotContains(t, remoteHeads(r), "refs/heads/api")
+	requireContains(t, out, "service has no pull request; --update opens none")
+}
+
 func TestSubmitLeavesAnOpenPullRequestAlone(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
@@ -212,9 +270,17 @@ func TestSubmitLeavesAnOpenPullRequestAlone(t *testing.T) {
 	r.existingPullRequest(42, "api", "main", "Old title")
 
 	out := r.stk("submit", "-p", "-n")
-	requireContains(t, out, "Pull request #42 is already open for api")
+	// The push is what updated it, and stk says which of the two happened.
+	requireContains(t, out, "Pull request #42 was refreshed for api")
 	requireContains(t, out, "https://github.com/example/repo/pull/42")
 	requireNotContains(t, r.ghCallLog(), "pr create")
+
+	// Nothing about the pull request itself was edited.
+	requireEqual(t, r.ghStubState().PRs[0].Title, "Old title", "title untouched")
+
+	// A second run pushes nothing, so it does not claim to have refreshed it.
+	out = r.stk("submit", "-p", "-n")
+	requireContains(t, out, "Pull request #42 is already open for api")
 }
 
 func TestSubmitStackOpensOnePullRequestPerBranch(t *testing.T) {

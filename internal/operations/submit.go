@@ -22,6 +22,10 @@ type SubmitOptions struct {
 	Stack bool
 	// NoComment leaves the stack comment on each pull request alone.
 	NoComment bool
+	// UpdateOnly refreshes the pull requests that already exist and never
+	// opens one, so a restacked stack can be republished without proposing
+	// work that is not ready to be looked at.
+	UpdateOnly bool
 }
 
 // PullRequestText is how the command layer collects a title and body. The
@@ -72,11 +76,15 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		if err != nil {
 			return err
 		}
-		if len(missing) > 0 && !opts.NoPrompt && env.AskPullRequest == nil {
+		if len(missing) > 0 && !opts.UpdateOnly && !opts.NoPrompt && env.AskPullRequest == nil {
 			return fmt.Errorf(
 				"%s needs a title and body for its pull request, and stk cannot ask\n\n"+
 					"Generate them instead:\n\n    stk submit --pull --no-prompt",
 				missing[0].Name)
+		}
+		if opts.UpdateOnly {
+			// Nothing will be created, so there is no draft state to decide.
+			missing = nil
 		}
 		if drafts, err = resolveDrafts(env, g, plan, missing, opts); err != nil {
 			return err
@@ -85,11 +93,13 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	pushed := 0
 	linked := 0
 	opened := 0
+	refreshed := 0
 	for _, b := range plan {
 		outcome, err := pushBranch(env, remote, b)
 		if err != nil {
 			return err
 		}
+		moved := false
 		switch outcome {
 		case git.PushCurrent:
 			// Nothing to report beyond the line pushBranch printed.
@@ -97,19 +107,23 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 			linked++
 		default:
 			pushed++
+			moved = true
 		}
 		if !opts.Pull || !wanted[b.ID] {
 			continue
 		}
-		created, err := ensurePullRequest(env, gh, g, b, opts, prs, drafts[b.ID])
+		created, existed, err := ensurePullRequest(env, gh, g, b, opts, prs, drafts[b.ID], moved)
 		if err != nil {
 			return err
 		}
-		if created {
+		switch {
+		case created:
 			opened++
 			if drafts[b.ID] {
 				drafted++
 			}
+		case existed && moved:
+			refreshed++
 		}
 	}
 
@@ -134,6 +148,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		linked:    linked,
 		opened:    opened,
 		commented: commented,
+		refreshed: refreshed,
 	}, opts))
 	return nil
 }
@@ -176,10 +191,14 @@ func submitPlan(g *stack.Graph, target *stack.Branch, opts SubmitOptions) ([]*st
 			"branch %q is not tracked by stk, so stk cannot tell what to base a pull request on\n\nTrack it first:\n\n    stk track %s --parent <branch>",
 			target.Name, target.Name)
 	}
-	// Deepest ancestor first, so every base exists before it is needed.
+	// Deepest ancestor first, so every base exists before it is needed. With
+	// --update nothing is opened, so nothing needs a base and no branch the
+	// user did not name gets published.
 	var plan []*stack.Branch
-	for p := target.Parent; p != nil && !p.IsTrunk; p = p.Parent {
-		plan = append([]*stack.Branch{p}, plan...)
+	if !opts.UpdateOnly {
+		for p := target.Parent; p != nil && !p.IsTrunk; p = p.Parent {
+			plan = append([]*stack.Branch{p}, plan...)
+		}
 	}
 	plan = append(plan, target)
 	return plan, map[string]bool{target.ID: true}, nil
@@ -275,36 +294,46 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 }
 
 // ensurePullRequest opens a pull request for a branch unless one is already
-// open, which stk never edits: someone may have rewritten the description in
-// the browser.
-func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions, prs *pullRequestCache, draft bool) (bool, error) {
+// open, and reports whether it created one and whether one was already there.
+//
+// An open pull request is never edited: someone may have rewritten the
+// description in the browser.
+func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions, prs *pullRequestCache, draft, moved bool) (created, existed bool, err error) {
 	if b.IsTrunk {
-		return false, nil
+		return false, false, nil
 	}
 	base := g.Trunk.Name
 	if b.Parent != nil && !b.Parent.IsTrunk {
 		base = b.Parent.Name
 	}
-	if b.Base != "" && env.Repo.CountCommits(b.Base, b.SHA) == 0 {
-		env.Out.Skip("%s adds no commits to %s; no pull request opened", b.Name, base)
-		return false, nil
-	}
-
 	if !env.DryRun {
 		existing, err := prs.open(gh, b.Name)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if existing != nil {
-			env.Out.OK("Pull request %s is already open for %s", existing, b.Name)
+			// The push is what brought it up to date; say which happened.
+			what := "is already open for"
+			if moved {
+				what = "was refreshed for"
+			}
+			env.Out.OK("Pull request %s %s %s", existing, what, b.Name)
 			env.Out.Printf("    %s", existing.URL)
-			return false, nil
+			return false, true, nil
 		}
+	}
+	if opts.UpdateOnly {
+		env.Out.Skip("%s has no pull request; --update opens none", b.Name)
+		return false, false, nil
+	}
+	if b.Base != "" && env.Repo.CountCommits(b.Base, b.SHA) == 0 {
+		env.Out.Skip("%s adds no commits to %s; no pull request opened", b.Name, base)
+		return false, false, nil
 	}
 
 	title, body, err := pullRequestText(env, b, base, opts)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	if env.DryRun {
@@ -316,7 +345,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		env.Out.Printf("    title: %s", title)
 		// Counted, because the summary of a dry run is written in the
 		// conditional too.
-		return true, nil
+		return true, false, nil
 	}
 	pr, err := gh.CreatePullRequest(forge.CreateOptions{
 		Head:  b.Name,
@@ -326,7 +355,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		Draft: draft,
 	})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	kind := "Opened pull request"
 	if draft {
@@ -341,7 +370,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		env.Out.Printf("    %s", pr.URL)
 	}
 	prs.record(b.Name, pr)
-	return true, nil
+	return true, false, nil
 }
 
 // missingPullRequests lists the branches stk was asked to propose that have no
@@ -448,6 +477,7 @@ type submitCounts struct {
 	pushed    int
 	linked    int
 	opened    int
+	refreshed int
 	commented int
 }
 
@@ -469,6 +499,9 @@ func submitSummary(env *Env, c submitCounts, opts SubmitOptions) string {
 	}
 	if opts.Pull && c.opened > 0 {
 		parts = append(parts, fmt.Sprintf("%d pull request(s) %s", c.opened, openedVerb))
+	}
+	if opts.Pull && c.refreshed > 0 {
+		parts = append(parts, fmt.Sprintf("%d pull request(s) refreshed", c.refreshed))
 	}
 	if c.commented > 0 {
 		what := "stack comment(s) written"

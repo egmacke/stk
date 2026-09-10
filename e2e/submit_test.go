@@ -391,6 +391,61 @@ func TestSubmitCommentsTheStackOnEveryPullRequest(t *testing.T) {
 	}
 }
 
+func TestSubmitKeepsMergedPullRequestsInTheStackComment(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+	requireContains(t, r.prComments(3)[0], "1. #1 `api`")
+
+	// api lands the way GitHub's squash button lands it, and sync removes the
+	// branch, so the local graph no longer knows #1 ever existed.
+	r.setPullRequestState(1, "MERGED")
+	r.stk("checkout", "main")
+	r.git("merge", "-q", "--squash", "api")
+	r.git("commit", "-q", "-m", "Add api (#1)")
+	r.git("checkout", "-q", "service")
+	// What sync --cleanup does once the merge lands, without the fetch: the
+	// remote here points at github.com so that gh can be given a repository.
+	r.stk("untrack", "api", "--reparent", "main")
+	r.git("branch", "-qD", "api")
+	r.stk("restack")
+	requireEqual(t, r.branchExists("api"), false, "the merged branch is gone")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Updated the stack comment")
+
+	// The merged pull request stays named, in its old place, labelled.
+	body := r.prComments(2)[0]
+	requireContains(t, body, "1. #1 `api` — merged")
+	requireContains(t, body, "2. #2 `service` ← this pull request")
+	requireContains(t, body, "3. #3 `ui`")
+	requireContains(t, body, "The ones already in are kept in the list")
+}
+
+func TestSubmitDropsAStrayOpenPullRequestFromTheComment(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+
+	// service leaves this stack for another one, with its pull request open.
+	r.stk("move", "service", "--onto", "main")
+	r.stk("checkout", "api")
+	out := r.stk("submit", "-u")
+
+	// api's own stack is one pull request now, and the note it already has
+	// must not go on claiming otherwise: an open pull request that has left
+	// the stack is somebody else's business, so it is dropped rather than
+	// labelled.
+	requireContains(t, out, "Updated the stack comment on #1")
+	body := r.prComments(1)[0]
+	requireNotContains(t, body, "#2 `service`")
+	requireContains(t, body, "1. #1 `api`")
+}
+
 func TestSubmitLeavesAnUnchangedStackCommentAlone(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api", "service")

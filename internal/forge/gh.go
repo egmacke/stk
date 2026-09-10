@@ -138,6 +138,26 @@ func (g *GH) pullRequest(branch, state string) (*PullRequest, error) {
 	return &prs[0], nil
 }
 
+// PullRequestByNumber reads one pull request by number, whatever its state.
+//
+// It goes through REST because stk needs it for pull requests whose branch is
+// gone, which "gh pr list --head" can no longer find.
+func (g *GH) PullRequestByNumber(number int) (*PullRequest, error) {
+	out, err := g.api("GET", g.apiPath("/pulls/%d", number),
+		"--jq", `{number: .number, url: .html_url, title: .title, isDraft: .draft, baseRefName: .base.ref, state: (if .merged then "MERGED" else (.state | ascii_upcase) end)}`)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	var pr PullRequest
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		return nil, fmt.Errorf("reading gh api pull request output: %w", err)
+	}
+	return &pr, nil
+}
+
 // RetargetPullRequest points an open pull request at another base branch.
 //
 // The base is the one thing stk maintains on a pull request it did not open:

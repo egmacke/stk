@@ -303,6 +303,21 @@ sits:
 > Each pull request is based on the one above it in this list, so review and
 > merge from the top down.
 
+**A pull request that has landed stays in the list.** By the time one merges
+its branch is gone from the local graph, so `stk` reads its own previous
+comment to recover the shape of the stack and keeps the entry where it was,
+labelled:
+
+> ### Stack
+>
+> 1. #1 `sc-123/api` — merged
+> 2. #2 `sc-123/service` ← this pull request
+> 3. #3 `sc-123/ui`
+
+An entry whose pull request was **closed** is kept the same way. One that is
+still **open** but has left the stack — moved onto another parent, say — is
+dropped instead: that is somebody else's stack to describe.
+
 It is written once and then edited in place — add a branch and every existing
 comment is rewritten, not duplicated. `stk` finds its own comment by a hidden
 marker and addresses the edit by that comment's id, so a comment somebody else

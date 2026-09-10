@@ -306,6 +306,21 @@ func api(args []string) {
 
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	s := load()
+	// One pull request by number, which stk reads for branches that are gone.
+	if method == "GET" && len(parts) == 5 && parts[3] == "pulls" {
+		n, err := strconv.Atoi(parts[4])
+		if err != nil {
+			fail("bad pull request number %q", parts[4])
+		}
+		for _, pr := range s.PRs {
+			if pr.Number == n {
+				out, _ := json.Marshal(pr)
+				fmt.Println(string(out))
+				return
+			}
+		}
+		fail("no pull request %d", n)
+	}
 	// The base of a pull request is changed through REST, because gh pr edit
 	// asks for scopes a base change does not need.
 	if method == "PATCH" && len(parts) == 5 && parts[3] == "pulls" {

@@ -20,6 +20,8 @@ type SubmitOptions struct {
 	NoPrompt bool
 	// Stack submits the whole stack rather than one branch.
 	Stack bool
+	// NoComment leaves the stack comment on each pull request alone.
+	NoComment bool
 }
 
 // PullRequestText is how the command layer collects a title and body. The
@@ -58,6 +60,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		}
 	}
 
+	prs := newPullRequestCache()
 	pushed := 0
 	linked := 0
 	opened := 0
@@ -77,7 +80,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		if !opts.Pull || !wanted[b.ID] {
 			continue
 		}
-		created, err := ensurePullRequest(env, gh, g, b, opts)
+		created, err := ensurePullRequest(env, gh, g, b, opts, prs)
 		if err != nil {
 			return err
 		}
@@ -86,12 +89,22 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		}
 	}
 
+	commented := 0
+	if opts.Pull && !opts.NoComment && target.Tracked {
+		// Last, so the note describes the stack as it now stands rather than
+		// as it was when the run started.
+		if commented, err = syncStackComments(env, gh, g, target, prs); err != nil {
+			return err
+		}
+	}
+
 	env.Out.Printf("")
 	env.Out.Printf("%s", submitSummary(env, submitCounts{
-		planned: len(plan),
-		pushed:  pushed,
-		linked:  linked,
-		opened:  opened,
+		planned:   len(plan),
+		pushed:    pushed,
+		linked:    linked,
+		opened:    opened,
+		commented: commented,
 	}, opts))
 	return nil
 }
@@ -231,7 +244,7 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 // ensurePullRequest opens a pull request for a branch unless one is already
 // open, which stk never edits: someone may have rewritten the description in
 // the browser.
-func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions) (bool, error) {
+func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions, prs *pullRequestCache) (bool, error) {
 	if b.IsTrunk {
 		return false, nil
 	}
@@ -245,7 +258,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 	}
 
 	if !env.DryRun {
-		existing, err := gh.OpenPullRequest(b.Name)
+		existing, err := prs.open(gh, b.Name)
 		if err != nil {
 			return false, err
 		}
@@ -290,6 +303,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 	if pr.URL != "" {
 		env.Out.Printf("    %s", pr.URL)
 	}
+	prs.record(b.Name, pr)
 	return true, nil
 }
 
@@ -326,10 +340,11 @@ func bulletBody(subjects []string) string {
 
 // submitCounts is what one submit run did.
 type submitCounts struct {
-	planned int
-	pushed  int
-	linked  int
-	opened  int
+	planned   int
+	pushed    int
+	linked    int
+	opened    int
+	commented int
 }
 
 // submitSummary closes the run. A dry run reports in the conditional, because
@@ -350,6 +365,13 @@ func submitSummary(env *Env, c submitCounts, opts SubmitOptions) string {
 	}
 	if opts.Pull && c.opened > 0 {
 		parts = append(parts, fmt.Sprintf("%d pull request(s) %s", c.opened, openedVerb))
+	}
+	if c.commented > 0 {
+		what := "stack comment(s) written"
+		if env.DryRun {
+			what = "stack comment(s) would be written"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", c.commented, what))
 	}
 	if accounted := c.pushed + c.linked; c.planned > accounted && accounted > 0 {
 		parts = append(parts, fmt.Sprintf("%d already up to date", c.planned-accounted))

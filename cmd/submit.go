@@ -13,7 +13,7 @@ import (
 )
 
 func newSubmitCmd() *cobra.Command {
-	var pull, draft, noPrompt, wholeStack bool
+	var pull, draft, noPrompt, wholeStack, noComment bool
 	cmd := &cobra.Command{
 		Use:   "submit [branch]",
 		Short: "Push a branch to the remote and optionally open a pull request",
@@ -26,6 +26,8 @@ func newSubmitCmd() *cobra.Command {
 			"remote yet are pushed first, because a pull request cannot be based on a\n" +
 			"branch that is not there. A pull request that is already open is left\n" +
 			"exactly as it is.\n\n" +
+			"Each pull request of the stack carries one stk comment listing the whole\n" +
+			"chain in order, rewritten in place as the stack changes.\n\n" +
 			"stk submit never merges and never deletes anything.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: branchNameCompletion,
@@ -62,10 +64,11 @@ func newSubmitCmd() *cobra.Command {
 				a.Env.AskPullRequest = askPullRequest
 			}
 			return operations.Submit(a.Env, a.Graph, target, operations.SubmitOptions{
-				Pull:     pull,
-				Draft:    draft,
-				NoPrompt: noPrompt,
-				Stack:    wholeStack,
+				Pull:      pull,
+				Draft:     draft,
+				NoPrompt:  noPrompt,
+				Stack:     wholeStack,
+				NoComment: noComment,
 			})
 		},
 	}
@@ -73,6 +76,7 @@ func newSubmitCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&draft, "draft", "d", false, "open the pull request as a draft (implies --pull)")
 	cmd.Flags().BoolVarP(&noPrompt, "no-prompt", "n", false, "do not ask for a title or body; use the generated ones")
 	cmd.Flags().BoolVarP(&wholeStack, "stack", "s", false, "submit every branch in the stack, each onto its parent")
+	cmd.Flags().BoolVar(&noComment, "no-comment", false, "do not write or update the stack comment on the pull requests")
 	return cmd
 }
 

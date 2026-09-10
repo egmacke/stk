@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -113,8 +114,8 @@ func TestSubmitPullOpensAPullRequest(t *testing.T) {
 	out := r.stk("submit", "--pull", "--no-prompt")
 	requireContains(t, out, "Pushed api to origin")
 	requireContains(t, out, "Pushed service to origin")
-	requireContains(t, out, "Opened pull request #7")
-	requireContains(t, out, "https://github.com/example/repo/pull/7")
+	requireContains(t, out, "Opened pull request #1")
+	requireContains(t, out, "https://github.com/example/repo/pull/1")
 
 	calls := r.ghCallLog()
 	requireContains(t, calls, "pr list --repo example/repo --head service")
@@ -131,7 +132,7 @@ func TestSubmitDraftImpliesPull(t *testing.T) {
 	r.useGitHubURL()
 
 	out := r.stk("submit", "-d", "-n")
-	requireContains(t, out, "Opened draft pull request #7")
+	requireContains(t, out, "Opened draft pull request #1")
 	requireContains(t, r.ghCallLog(), "--base main --title api --body - api --draft")
 }
 
@@ -140,7 +141,7 @@ func TestSubmitLeavesAnOpenPullRequestAlone(t *testing.T) {
 	buildStack(r, "api")
 	r.stubGH()
 	r.useGitHubURL()
-	r.existingPullRequest(`[{"number":42,"url":"https://github.com/example/repo/pull/42","title":"Old title","isDraft":false,"state":"OPEN"}]`)
+	r.existingPullRequest(42, "api", "main", "Old title")
 
 	out := r.stk("submit", "-p", "-n")
 	requireContains(t, out, "Pull request #42 is already open for api")
@@ -162,6 +163,133 @@ func TestSubmitStackOpensOnePullRequestPerBranch(t *testing.T) {
 	requireContains(t, calls, "--head api --base main")
 	requireContains(t, calls, "--head service --base api")
 	requireContains(t, calls, "--head ui --base service")
+}
+
+func TestSubmitCommentsTheStackOnEveryPullRequest(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stk("submit", "-spn")
+	requireContains(t, out, "Commented the stack on #1")
+	requireContains(t, out, "Commented the stack on #2")
+	requireContains(t, out, "Commented the stack on #3")
+	requireContains(t, out, "3 stack comment(s) written")
+
+	// One comment per pull request, listing the whole chain bottom first.
+	for number, branch := range map[int]string{1: "api", 2: "service", 3: "ui"} {
+		comments := r.prComments(number)
+		requireEqual(t, len(comments), 1, "one comment on #"+strconv.Itoa(number))
+		body := comments[0]
+		requireContains(t, body, "<!-- stk:stack -->")
+		requireContains(t, body, "1. #1 `api`")
+		requireContains(t, body, "2. #2 `service`")
+		requireContains(t, body, "3. #3 `ui`")
+		// Only the reader's own pull request is marked.
+		requireContains(t, body, "`"+branch+"` ← this pull request")
+		requireEqual(t, strings.Count(body, "← this pull request"), 1, "one marker on #"+strconv.Itoa(number))
+	}
+}
+
+func TestSubmitLeavesAnUnchangedStackCommentAlone(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("submit", "-spn")
+
+	// Nothing about the stack has changed, so the comments must not be
+	// rewritten and the timeline must not be disturbed.
+	out := r.stk("submit", "-spn")
+	requireNotContains(t, out, "stack comment")
+	requireNotContains(t, r.ghCallLog(), "--method PATCH")
+	requireEqual(t, len(r.prComments(1)), 1, "still one comment")
+}
+
+func TestSubmitUpdatesTheStackCommentWhenTheStackGrows(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("submit", "-spn")
+	requireNotContains(t, r.prComments(1)[0], "`ui`")
+
+	// A third branch joins the stack.
+	r.stk("create", "ui")
+	r.commit("ui.txt", "ui\n", "ui")
+	out := r.stk("submit", "-spn")
+	requireContains(t, out, "Commented the stack on #3")
+	requireContains(t, out, "Updated the stack comment on #1")
+	requireContains(t, out, "Updated the stack comment on #2")
+
+	for _, number := range []int{1, 2, 3} {
+		comments := r.prComments(number)
+		requireEqual(t, len(comments), 1, "one comment on #"+strconv.Itoa(number))
+		requireContains(t, comments[0], "3. #3 `ui`")
+	}
+}
+
+func TestSubmitDoesNotCommentOnASinglePullRequest(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stk("submit", "-pn")
+	requireContains(t, out, "Opened pull request #1")
+	requireNotContains(t, out, "stack comment")
+	requireEqual(t, len(r.prComments(1)), 0, "no comment on a stack of one")
+}
+
+func TestSubmitNoCommentSkipsTheStackComment(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stk("submit", "-spn", "--no-comment")
+	requireContains(t, out, "2 pull request(s) opened")
+	requireNotContains(t, out, "stack comment")
+	requireEqual(t, len(r.prComments(1)), 0, "no comment written")
+	requireEqual(t, len(r.prComments(2)), 0, "no comment written")
+}
+
+func TestSubmitCommentsTheStackFromASingleBranchSubmit(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("submit", "-spn")
+
+	// Submitting one branch still refreshes the whole stack's note, because
+	// the note is about the stack and not about the branch.
+	r.stk("checkout", "api")
+	r.commit("more.txt", "more\n", "more api work")
+	out := r.stk("submit", "-pn")
+	requireContains(t, out, "Pushed api to origin")
+	requireNotContains(t, out, "stack comment")
+	requireContains(t, r.prComments(2)[0], "1. #1 `api`")
+}
+
+func TestSubmitNeverTouchesSomeoneElsesComment(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("submit", "-spn")
+
+	// A reviewer comments after stk did.
+	r.appendPRComment(1, "Looks good, one nit about naming.")
+
+	r.stk("create", "ui")
+	r.commit("ui.txt", "ui\n", "ui")
+	r.stk("submit", "-spn")
+
+	comments := r.prComments(1)
+	requireEqual(t, len(comments), 2, "the review comment survived")
+	requireContains(t, comments[0], "3. #3 `ui`")
+	requireEqual(t, comments[1], "Looks good, one nit about naming.", "review comment unchanged")
 }
 
 func TestSubmitPromptsForTitleAndBody(t *testing.T) {
@@ -270,10 +398,11 @@ func TestSubmitDryRunPushesNothing(t *testing.T) {
 	requireContains(t, out, "1 pull request(s) would be opened")
 	requireContains(t, out, "nothing has been published")
 	requireNotContains(t, remoteHeads(r), "refs/heads/api")
-	// A dry run still verifies it could log in, and asks gh for nothing else.
+	// A dry run verifies it could log in and reads what is already open, but
+	// writes nothing at all.
 	requireContains(t, r.ghCallLog(), "auth status")
-	requireNotContains(t, r.ghCallLog(), "pr list")
 	requireNotContains(t, r.ghCallLog(), "pr create")
+	requireNotContains(t, r.ghCallLog(), "--method")
 }
 
 func TestSubmitRefusesWhileAnOperationIsPaused(t *testing.T) {

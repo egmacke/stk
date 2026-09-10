@@ -5,15 +5,20 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-var stkBin string
+var (
+	stkBin    string
+	stubGHBin string
+)
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "stk-build-")
@@ -29,6 +34,17 @@ func TestMain(m *testing.M) {
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "building stk: %v\n", err)
+		os.Exit(1)
+	}
+
+	// The fake GitHub CLI is a real program, so the comment endpoints stk uses
+	// can be answered with correct JSON and asserted on.
+	stubGHBin = filepath.Join(dir, "gh")
+	build = exec.Command("go", "build", "-o", stubGHBin, "./stubgh")
+	build.Stdout = os.Stderr
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "building the stub gh: %v\n", err)
 		os.Exit(1)
 	}
 	os.Exit(m.Run())
@@ -51,7 +67,7 @@ func (r *repo) env() []string {
 	return append(os.Environ(),
 		"PATH="+r.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GH_CALLS="+r.ghCalls(),
-		"GH_EXISTING="+r.ghExisting(),
+		"GH_STATE="+r.ghState(),
 		"GH_UNAUTHENTICATED="+r.ghUnauthenticated(),
 		"HOME="+r.home,
 		"XDG_CONFIG_HOME="+filepath.Join(r.home, "config"),
@@ -242,49 +258,24 @@ func (r *repo) log(branch string) []string {
 // ghCalls is the file the stub gh appends every invocation to.
 func (r *repo) ghCalls() string { return filepath.Join(r.bin, "gh-calls.log") }
 
-// ghExisting is the file the stub gh answers "gh pr list" from.
-func (r *repo) ghExisting() string { return filepath.Join(r.bin, "gh-existing.json") }
+// ghState is the stub gh's pull request and comment store.
+func (r *repo) ghState() string { return filepath.Join(r.bin, "gh-state.json") }
 
 // ghUnauthenticated is the file whose presence makes the stub gh refuse.
 func (r *repo) ghUnauthenticated() string { return filepath.Join(r.bin, "gh-logged-out") }
+
+// stubGH puts the fake GitHub CLI on PATH.
+func (r *repo) stubGH() {
+	r.t.Helper()
+	if err := os.Symlink(stubGHBin, filepath.Join(r.bin, "gh")); err != nil {
+		r.t.Fatal(err)
+	}
+}
 
 // logOutGH makes the stub gh report that nobody is logged in.
 func (r *repo) logOutGH() {
 	r.t.Helper()
 	if err := os.WriteFile(r.ghUnauthenticated(), nil, 0o644); err != nil {
-		r.t.Fatal(err)
-	}
-}
-
-// stubGH puts a fake GitHub CLI on PATH. It records its arguments, answers
-// "pr list" from ghExisting (an empty list when that file is absent) and
-// answers "pr create" with a fixed pull request URL.
-func (r *repo) stubGH() {
-	r.t.Helper()
-	script := `#!/bin/sh
-printf '%s\n' "$*" >> "$GH_CALLS"
-case "$1 $2" in
-"auth status")
-	if [ -f "$GH_UNAUTHENTICATED" ]; then
-		echo "gh: You are not logged into any GitHub hosts." >&2
-		exit 1
-	fi
-	echo "Logged in to github.com account tester"
-	;;
-"pr list")
-	if [ -f "$GH_EXISTING" ]; then cat "$GH_EXISTING"; else echo "[]"; fi
-	;;
-"pr create")
-	echo "https://github.com/example/repo/pull/7"
-	;;
-*)
-	echo "stub gh: unexpected call: $*" >&2
-	exit 1
-	;;
-esac
-`
-	path := filepath.Join(r.bin, "gh")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		r.t.Fatal(err)
 	}
 }
@@ -302,10 +293,107 @@ func (r *repo) ghCallLog() string {
 	return string(data)
 }
 
-// existingPullRequest makes the stub gh report an open pull request.
-func (r *repo) existingPullRequest(json string) {
+// ghStubState is the stub gh's store, decoded.
+type ghStubState struct {
+	PRs []struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		Base   string `json:"baseRefName"`
+		Head   string `json:"headRefName"`
+		Draft  bool   `json:"isDraft"`
+	} `json:"prs"`
+	Comments map[string][]struct {
+		ID    int64  `json:"id"`
+		Body  string `json:"body"`
+		Login string `json:"login"`
+	} `json:"comments"`
+}
+
+func (r *repo) ghStubState() ghStubState {
 	r.t.Helper()
-	if err := os.WriteFile(r.ghExisting(), []byte(json), 0o644); err != nil {
+	var state ghStubState
+	data, err := os.ReadFile(r.ghState())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return state
+		}
+		r.t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		r.t.Fatal(err)
+	}
+	return state
+}
+
+// prComments returns the comments the stub gh holds for one pull request.
+func (r *repo) prComments(number int) []string {
+	r.t.Helper()
+	var out []string
+	for _, c := range r.ghStubState().Comments[strconv.Itoa(number)] {
+		out = append(out, c.Body)
+	}
+	return out
+}
+
+// appendPRComment adds a comment to the stub gh's store, as another person
+// commenting on the pull request would.
+func (r *repo) appendPRComment(number int, body string) {
+	r.t.Helper()
+	var raw map[string]any
+	data, err := os.ReadFile(r.ghState())
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		r.t.Fatal(err)
+	}
+	comments, _ := raw["comments"].(map[string]any)
+	if comments == nil {
+		comments = map[string]any{}
+		raw["comments"] = comments
+	}
+	key := strconv.Itoa(number)
+	list, _ := comments[key].([]any)
+	next, _ := raw["nextComment"].(float64)
+	if next == 0 {
+		next = 1001
+	}
+	comments[key] = append(list, map[string]any{"id": next, "body": body, "login": "reviewer"})
+	raw["nextComment"] = next + 1
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(r.ghState(), out, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// existingPullRequest seeds the stub gh with a pull request stk did not open.
+func (r *repo) existingPullRequest(number int, head, base, title string) {
+	r.t.Helper()
+	state := struct {
+		NextPR      int              `json:"nextPr"`
+		NextComment int64            `json:"nextComment"`
+		PRs         []map[string]any `json:"prs"`
+	}{
+		NextPR:      number + 1,
+		NextComment: 1001,
+		PRs: []map[string]any{{
+			"number":      number,
+			"url":         fmt.Sprintf("https://github.com/example/repo/pull/%d", number),
+			"title":       title,
+			"baseRefName": base,
+			"headRefName": head,
+			"state":       "OPEN",
+		}},
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(r.ghState(), data, 0o644); err != nil {
 		r.t.Fatal(err)
 	}
 }

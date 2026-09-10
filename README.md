@@ -185,6 +185,7 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | `--draft` | `-d` | open it as a draft; implies `--pull` |
 | `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
+| `--no-comment` | | leave the stack comment on each pull request alone |
 
 Without `-n` the title and body are asked for, prefilled from the branch's
 commits; press enter to accept an offer. Without a terminal, `--pull` needs
@@ -194,9 +195,36 @@ A pull request cannot be based on a branch the remote does not have, so
 ancestors that have never been pushed are pushed first — they are not
 proposed, only published. `--stack` is what proposes the whole chain.
 
+### The stack comment
+
+Every pull request in a submitted stack carries **one** `stk` comment naming
+the whole chain in order, so a reviewer landing on any of them can see where it
+sits:
+
+> ### Stack
+>
+> 1. #1 `sc-123/api`
+> 2. #2 `sc-123/service` ← this pull request
+> 3. #3 `sc-123/ui`
+>
+> Each pull request is based on the one above it in this list, so review and
+> merge from the top down.
+
+It is written once and then edited in place — add a branch and every existing
+comment is rewritten, not duplicated. `stk` finds its own comment by a hidden
+marker and addresses the edit by that comment's id, so a comment somebody else
+wrote is never touched, whatever order the timeline is in. A body that already
+says exactly the right thing is left alone entirely, so nothing is bumped for
+no reason.
+
+A stack of one pull request gets no comment. `--no-comment` skips the whole
+business.
+
 An **open pull request is never edited**: `stk` pushes the branch, prints the
 existing PR and leaves its title, body and draft state alone, because someone
-may have rewritten them in the browser.
+may have rewritten them in the browser. The stack comment is the one thing
+`stk` maintains, and it is a comment rather than an edit to the description for
+exactly that reason.
 
 ```console
 $ stk submit -p
@@ -282,9 +310,9 @@ stk create api -fmain  # --from main, value attached
 ```
 
 `--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
-`--autostash`, `--no-autostash` and `--rebase-merges` have none: a slipped
-letter should not disable a safety, delete a branch or move someone's
-uncommitted work.
+`--autostash`, `--no-autostash`, `--no-comment` and `--rebase-merges` have
+none: a slipped letter should not disable a safety, delete a branch or move
+someone's uncommitted work.
 
 ## Missing arguments
 

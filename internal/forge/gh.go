@@ -125,6 +125,69 @@ func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {
 	return &prs[0], nil
 }
 
+// Comment is one comment on a pull request, reduced to what stk needs to find
+// its own again and rewrite it.
+type Comment struct {
+	ID    int64  `json:"id"`
+	Body  string `json:"body"`
+	Login string `json:"login"`
+}
+
+// apiPath builds a REST path for this repository.
+func (g *GH) apiPath(format string, args ...any) string {
+	return fmt.Sprintf("/repos/%s/%s", g.Repo.Owner, g.Repo.Name) + fmt.Sprintf(format, args...)
+}
+
+// api runs gh api against the repository's host.
+func (g *GH) api(method, path string, fields ...string) (string, error) {
+	args := []string{"api"}
+	if g.Repo.Host != "" && g.Repo.Host != "github.com" {
+		args = append(args, "--hostname", g.Repo.Host)
+	}
+	if method != "GET" {
+		args = append(args, "--method", method)
+	}
+	args = append(args, path)
+	args = append(args, fields...)
+	return g.exec(args...)
+}
+
+// Comments lists the comments on a pull request.
+//
+// The projection is done by gh, so stk depends on three documented fields and
+// not on the shape of the whole payload, and --paginate means a comment does
+// not hide on the second page of a busy pull request.
+func (g *GH) Comments(number int) ([]Comment, error) {
+	out, err := g.api("GET", g.apiPath("/issues/%d/comments", number),
+		"--paginate", "--jq", `.[] | {id: .id, body: .body, login: .user.login}`)
+	if err != nil {
+		return nil, err
+	}
+	var comments []Comment
+	dec := json.NewDecoder(strings.NewReader(out))
+	for dec.More() {
+		var c Comment
+		if err := dec.Decode(&c); err != nil {
+			return nil, fmt.Errorf("reading gh api comment output: %w", err)
+		}
+		comments = append(comments, c)
+	}
+	return comments, nil
+}
+
+// AddComment posts a new comment on a pull request.
+func (g *GH) AddComment(number int, body string) error {
+	_, err := g.api("POST", g.apiPath("/issues/%d/comments", number), "-f", "body="+body)
+	return err
+}
+
+// UpdateComment rewrites one existing comment, addressed by its own id so that
+// no comment stk did not write can ever be overwritten.
+func (g *GH) UpdateComment(id int64, body string) error {
+	_, err := g.api("PATCH", g.apiPath("/issues/comments/%d", id), "-f", "body="+body)
+	return err
+}
+
 // CreateOptions describes a pull request to open.
 type CreateOptions struct {
 	Head  string

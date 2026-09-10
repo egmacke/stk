@@ -176,6 +176,16 @@ func (r *repo) amend(rel, content, message string) {
 	r.git("commit", "-q", "--amend", "-m", message)
 }
 
+// fileContent reads a file relative to the repository root.
+func (r *repo) fileContent(rel string) string {
+	r.t.Helper()
+	data, err := os.ReadFile(filepath.Join(r.Root, rel))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return string(data)
+}
+
 func (r *repo) sha(rev string) string {
 	r.t.Helper()
 	return r.git("rev-parse", rev)

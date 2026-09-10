@@ -253,6 +253,25 @@ func runDoctor() doctorReport {
 		}
 	}
 
+	stashes, stashErr := stack.ReadAutostashes(repo)
+	switch {
+	case stashErr != nil:
+		add("parked changes", statusFail, "%v", stashErr)
+	case len(stashes) == 0:
+		add("no parked changes", statusOK, "")
+	case opErr == nil && op.AutostashSHA != "":
+		add("parked changes", statusOK, "%s is held by the operation in progress", git.ShortSHA(op.AutostashSHA))
+	default:
+		var shas []string
+		for _, sha := range stashes {
+			shas = append(shas, sha)
+		}
+		sort.Strings(shas)
+		add("parked changes", statusWarn,
+			"%d stash(es) stk parked and never restored: %s (recover with git stash apply <sha>, then git update-ref -d %s<id>)",
+			len(shas), strings.Join(shas, ", "), stack.AutostashRefPrefix)
+	}
+
 	worktrees, err := repo.Worktrees()
 	if err != nil {
 		add("worktree state", statusFail, "%v", err)

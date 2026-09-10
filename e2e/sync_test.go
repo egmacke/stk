@@ -216,9 +216,10 @@ func TestSyncNeverPushes(t *testing.T) {
 	requireNotContains(t, r.git("ls-remote", "--heads", "origin"), "refs/heads/api")
 }
 
-func TestSyncRefusesDirtyWorktree(t *testing.T) {
+func TestSyncRefusesDirtyWorktreeWithNoAutostash(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
 	r.write("api.txt", "dirty\n")
-	requireContains(t, r.stkFail("--no-interactive", "sync"), "uncommitted changes")
+	out := r.stkFail("--no-interactive", "sync", "--no-autostash")
+	requireContains(t, out, "uncommitted changes")
 }

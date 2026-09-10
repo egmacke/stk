@@ -24,6 +24,10 @@ const (
 	// SnapshotRefPrefix protects branch tips for the duration of a multi-branch
 	// operation, so the whole operation can be rolled back.
 	SnapshotRefPrefix = "refs/stk/snapshot/"
+	// AutostashRefPrefix holds uncommitted work stk has parked while it moves
+	// or rewrites branches. A ref of its own, rather than only the stash
+	// reflog, keeps the changes reachable if stk is killed mid-operation.
+	AutostashRefPrefix = "refs/stk/autostash/"
 )
 
 // NewID returns a fresh stable branch identity.
@@ -41,6 +45,22 @@ func BaseRef(id string) string { return BaseRefPrefix + id }
 // SnapshotRef is the snapshot ref for a branch within one operation.
 func SnapshotRef(opID, branchID string) string {
 	return SnapshotRefPrefix + opID + "/" + branchID
+}
+
+// AutostashRef is the ref holding one parked set of uncommitted changes.
+func AutostashRef(id string) string { return AutostashRefPrefix + id }
+
+// ReadAutostashes returns every parked stash keyed by its id.
+func ReadAutostashes(repo *git.Repo) (map[string]string, error) {
+	refs, err := repo.ListRefs(AutostashRefPrefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(refs))
+	for ref, sha := range refs {
+		out[strings.TrimPrefix(ref, AutostashRefPrefix)] = sha
+	}
+	return out, nil
 }
 
 func branchKey(name, suffix string) string {

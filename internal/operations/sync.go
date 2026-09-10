@@ -38,6 +38,19 @@ func Sync(env *Env, opts SyncOptions) error {
 	if err := requireNoOperation(env); err != nil {
 		return err
 	}
+	// Parked before the fetch rather than before the restack: a dirty working
+	// tree also stops trunk moving when trunk is checked out here.
+	stash, err := Stash(env, "sync")
+	if err != nil {
+		return err
+	}
+	// Until the restack takes over, the stash is this function's to put back.
+	handedOver := false
+	defer func() {
+		if !handedOver {
+			stash.Restore(env)
+		}
+	}()
 	if opts.Restack {
 		if err := requireCleanTree(env); err != nil {
 			return err
@@ -98,10 +111,12 @@ func Sync(env *Env, opts SyncOptions) error {
 		env.Out.Printf("a dry run does not fetch or move it.")
 		env.Out.Printf("")
 	}
+	handedOver = true
 	_, err = Restack(env, g, target, RestackOptions{
 		Scope:       scope,
 		Heading:     "Restacking...",
 		DoneMessage: "All stacks are up to date.",
+		Stash:       stash,
 	})
 	return err
 }

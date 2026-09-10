@@ -179,6 +179,7 @@ func open() (*app, error) {
 		Out:         printer,
 		Interactive: Interactive(),
 		DryRun:      globals.dryRun,
+		Autostash:   cfg.Autostash,
 	}
 	if Interactive() {
 		a.Env.Confirm = ui.Confirm

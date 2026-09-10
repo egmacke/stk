@@ -95,8 +95,12 @@ func (repo *Repo) CreateBranch(name, start string) error {
 }
 
 // Switch checks out an existing branch.
-func (repo *Repo) Switch(name string) error {
-	return repo.R.Mutate("switch", name).Error()
+func (repo *Repo) Switch(name string) error { return repo.TrySwitch(name).Error() }
+
+// TrySwitch is Switch with git's own result, for callers that have to tell why
+// a checkout was refused rather than only that it was.
+func (repo *Repo) TrySwitch(name string) Result {
+	return repo.R.Mutate("switch", name)
 }
 
 // SwitchDetach detaches HEAD at a commit, releasing any branch it holds.

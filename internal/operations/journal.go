@@ -58,6 +58,29 @@ type Operation struct {
 	// Cleanup carries sync work that must still happen after the restack
 	// portion of a sync operation finishes.
 	SyncRestackRemaining bool `json:"syncRestackRemaining,omitempty"`
+	// AutostashSHA and AutostashRef record changes parked for the duration of
+	// the operation. They live in the journal so a conflict pause hands them
+	// to stk continue and stk abort rather than losing track of them.
+	AutostashSHA   string `json:"autostashSha,omitempty"`
+	AutostashRef   string `json:"autostashRef,omitempty"`
+	AutostashLabel string `json:"autostashLabel,omitempty"`
+}
+
+// Autostash returns the changes parked for this operation, or nil when the
+// working tree was clean.
+func (op *Operation) Autostash() *Autostash {
+	if op.AutostashSHA == "" {
+		return nil
+	}
+	return &Autostash{SHA: op.AutostashSHA, Ref: op.AutostashRef, Label: op.AutostashLabel}
+}
+
+// AdoptAutostash records a parked stash as belonging to this operation.
+func (op *Operation) AdoptAutostash(a *Autostash) {
+	if a == nil {
+		return
+	}
+	op.AutostashSHA, op.AutostashRef, op.AutostashLabel = a.SHA, a.Ref, a.Label
 }
 
 // ErrNoOperation is returned when no stk operation is in flight.

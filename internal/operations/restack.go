@@ -91,11 +91,25 @@ type RestackOptions struct {
 	Heading string
 	// DoneMessage is printed when nothing needed changing.
 	DoneMessage string
+	// Stash hands over changes the caller has already parked, for operations
+	// such as move that must clear the working tree before they touch
+	// metadata. Restack parks its own when this is nil.
+	Stash *Autostash
 }
 
 // Restack makes a portion of the stack graph internally consistent by rebasing
 // each branch onto its logical parent, parents before children.
 func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions) (Summary, error) {
+	// Whatever the caller parked, or this function parks below, is put back
+	// here unless runPlan takes ownership of it.
+	stash := opts.Stash
+	journalled := false
+	defer func() {
+		if !journalled {
+			stash.Restore(env)
+		}
+	}()
+
 	plan, err := PlanBranches(g, target, opts.Scope)
 	if err != nil {
 		return Summary{}, err
@@ -105,13 +119,21 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 		return Summary{}, nil
 	}
 	if env.DryRun {
+		noteDryRunStash(env)
 		PrintDryRun(env, g, plan)
 		return Summary{}, nil
 	}
-	if err := requireCleanTree(env); err != nil {
+	// The journal is checked before anything is parked: refusing to start is
+	// no reason to disturb the working tree.
+	if err := requireNoOperation(env); err != nil {
 		return Summary{}, err
 	}
-	if err := requireNoOperation(env); err != nil {
+	if stash == nil {
+		if stash, err = Stash(env, "restack"); err != nil {
+			return Summary{}, err
+		}
+	}
+	if err := requireCleanTree(env); err != nil {
 		return Summary{}, err
 	}
 
@@ -130,6 +152,7 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 		RebaseMerges:   opts.RebaseMerges,
 		DoneMessage:    opts.DoneMessage,
 	}
+	op.AdoptAutostash(stash)
 	if g.Current != nil {
 		op.OriginalBranchID = g.Current.ID
 	}
@@ -141,12 +164,16 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 		env.Out.Printf("%s", opts.Heading)
 		env.Out.Printf("")
 	}
+	journalled = true
 	return runPlan(env, op, g, 0)
 }
 
 // runPlan executes the journalled plan from index start onwards. Outcome
 // counts and the blocked set are carried in the journal so a plan paused by a
 // conflict resumes with the same knowledge it had before.
+//
+// It owns any autostash recorded in the journal, and restores it on every exit
+// but a conflict pause, where stk continue or stk abort inherits it.
 func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error) {
 	sum := op.Done
 	blocked := map[string]bool{}
@@ -175,6 +202,7 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 			// leave no journal behind so the repository is not wedged.
 			_ = op.Clear(env.Repo)
 			restoreOriginal(env, op)
+			op.Autostash().Restore(env)
 			return sum, err
 		}
 		switch outcome {
@@ -193,6 +221,8 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 
 	restoreOriginal(env, op)
 	if err := op.Clear(env.Repo); err != nil {
+		// The parked changes must not go down with the journal.
+		op.Autostash().Restore(env)
 		return sum, err
 	}
 	env.Out.Printf("")
@@ -205,6 +235,9 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 	} else {
 		env.Out.Printf("%s", summarise(sum))
 	}
+	// Back on the original branch, so the parked changes land where they were
+	// taken from.
+	op.Autostash().Restore(env)
 	return sum, nil
 }
 

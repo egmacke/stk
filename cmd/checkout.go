@@ -6,11 +6,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"stk/internal/operations"
 	"stk/internal/stack"
 	"stk/internal/ui"
 )
 
 func newCheckoutCmd() *cobra.Command {
+	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:     "checkout [branch]",
 		Aliases: []string{"co"},
@@ -19,6 +21,9 @@ func newCheckoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			if len(args) == 1 {
@@ -47,6 +52,7 @@ func newCheckoutCmd() *cobra.Command {
 		},
 		ValidArgsFunction: branchNameCompletion,
 	}
+	stash.register(cmd)
 	return cmd
 }
 
@@ -64,9 +70,7 @@ func switchTo(a *app, b *stack.Branch) error {
 		a.Out.Printf("(dry-run) would switch to %s", b.Name)
 		return nil
 	}
-	if err := a.Repo.Switch(b.Name); err != nil {
-		return err
-	}
-	a.Out.OK("Switched to %s", b.Name)
-	return nil
+	// operations.Switch reports the switch itself, because with --autostash
+	// there are two more lines to interleave with it.
+	return operations.Switch(a.Env, b.Name)
 }

@@ -179,13 +179,14 @@ func TestRestackAfterManualGitRebase(t *testing.T) {
 	requireEqual(t, r.baseOf("b"), r.sha("a"), "stored base caught up")
 }
 
-func TestRestackRefusesDirtyWorktree(t *testing.T) {
+func TestRestackRefusesDirtyWorktreeWithNoAutostash(t *testing.T) {
 	r := newRepo(t)
 	buildStack(r, "a", "b")
 	r.write("a.txt", "dirty\n")
-	out := r.stkFail("restack")
+	out := r.stkFail("restack", "--no-autostash")
 	requireContains(t, out, "uncommitted changes")
-	requireContains(t, out, "does not stash automatically")
+	requireContains(t, out, "Autostashing is off")
+	requireEqual(t, r.fileContent("a.txt"), "dirty\n", "refusing to run changes nothing")
 }
 
 func TestRestackDryRunChangesNothing(t *testing.T) {

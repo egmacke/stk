@@ -75,7 +75,8 @@ func stepCount(args []string) (int, error) {
 }
 
 func newDownCmd() *cobra.Command {
-	return &cobra.Command{
+	var stash autostashPref
+	cmd := &cobra.Command{
 		Use:   "down [n]",
 		Short: "Move one step (or n steps) toward trunk",
 		Args:  cobra.MaximumNArgs(1),
@@ -86,6 +87,9 @@ func newDownCmd() *cobra.Command {
 			}
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			cur := a.Graph.Current
@@ -105,10 +109,13 @@ func newDownCmd() *cobra.Command {
 			return switchTo(a, target)
 		},
 	}
+	stash.register(cmd)
+	return cmd
 }
 
 func newUpCmd() *cobra.Command {
-	return &cobra.Command{
+	var stash autostashPref
+	cmd := &cobra.Command{
 		Use:   "up [n]",
 		Short: "Move one step (or n steps) away from trunk",
 		Long:  "When a branch has several children, stk asks which one to follow.",
@@ -120,6 +127,9 @@ func newUpCmd() *cobra.Command {
 			}
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			target := a.Graph.Current
@@ -136,6 +146,8 @@ func newUpCmd() *cobra.Command {
 			return switchTo(a, target)
 		},
 	}
+	stash.register(cmd)
+	return cmd
 }
 
 // chooseChild picks the single child, or asks when a branch forks.
@@ -165,13 +177,17 @@ func choose(a *app, candidates []*stack.Branch, title string) (*stack.Branch, er
 }
 
 func newBottomCmd() *cobra.Command {
-	return &cobra.Command{
+	var stash autostashPref
+	cmd := &cobra.Command{
 		Use:   "bottom",
 		Short: "Switch to the lowest branch of the current stack",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			cur := a.Graph.Current
@@ -188,16 +204,22 @@ func newBottomCmd() *cobra.Command {
 			return switchTo(a, root)
 		},
 	}
+	stash.register(cmd)
+	return cmd
 }
 
 func newTopCmd() *cobra.Command {
-	return &cobra.Command{
+	var stash autostashPref
+	cmd := &cobra.Command{
 		Use:   "top",
 		Short: "Switch to the highest branch above the current one",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			cur := a.Graph.Current
@@ -221,4 +243,6 @@ func newTopCmd() *cobra.Command {
 			return switchTo(a, chosen)
 		},
 	}
+	stash.register(cmd)
+	return cmd
 }

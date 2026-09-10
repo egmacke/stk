@@ -17,7 +17,7 @@ func TestSyncDryRunChangesNothing(t *testing.T) {
 	out := r.stk("--no-interactive", "--dry-run", "sync", "--cleanup")
 	requireContains(t, out, "would fetch origin")
 	requireContains(t, out, "would fast-forward main")
-	requireContains(t, out, "fully contained in main")
+	requireContains(t, out, "add nothing to main")
 	requireContains(t, out, "No changes have been made.")
 
 	requireEqual(t, r.sha("main"), trunkBefore, "trunk moved during a dry run")

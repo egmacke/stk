@@ -204,10 +204,16 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 		if b.SHA == "" || b.HasProblem() {
 			continue
 		}
-		// Git can prove the branch holds no commit that trunk lacks, so
+		// Git can prove the branch holds nothing that trunk lacks, so
 		// deleting it discards nothing. Branches checked out in a worktree
 		// are excluded below, which spares freshly created ones.
-		if !repo.IsAncestor(b.SHA, trunkSHA) {
+		//
+		// Ancestry is the plain case. A squash merge is the other one: the
+		// content lands on trunk under a commit of its own, so the branch is
+		// no ancestor of trunk and yet adds nothing to it — identical trees
+		// are the proof, and without this a squash-merged branch would only
+		// be noticed by the next sync, after a restack had emptied it.
+		if !repo.IsAncestor(b.SHA, trunkSHA) && !repo.SameTree(trunkSHA, b.SHA) {
 			continue
 		}
 		if b.Worktree != "" {
@@ -231,7 +237,7 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 	}
 
 	env.Out.Printf("")
-	env.Out.Printf("The following branches are fully contained in %s:", g.Trunk.Name)
+	env.Out.Printf("The following branches add nothing to %s:", g.Trunk.Name)
 	env.Out.Printf("")
 	for _, b := range safe {
 		env.Out.Printf("    %s", b.Name)

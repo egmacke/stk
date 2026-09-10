@@ -584,6 +584,39 @@ strand them: `stk continue` restores them when the restack finishes, and
 paused they live in `refs/stk/autostash/<id>` rather than only in the stash
 reflog, and `stk doctor` reports any that a killed `stk` left behind.
 
+## Merged branches
+
+`stk sync` offers to remove branches that add nothing to trunk. Two things
+count as merged, because the forges do both:
+
+| How it landed | How `stk` sees it |
+| --- | --- |
+| merge or rebase | the branch's commits are ancestors of trunk |
+| **squash** | the commits are not in trunk, but the branch's content is identical to it |
+
+The squash case is the one a stacking tool has to get right: GitHub's default
+lands a stack's bottom branch as a single new commit, so ancestry alone shows
+nothing, and without the content check the branch would only be noticed on the
+*next* sync — after a restack had rebased it into emptiness.
+
+Restacking removes merged work from the branches above too, without being
+asked: `git rebase` drops a commit whose change is already upstream, so a
+squash-merged commit does not come back as a duplicate on its children.
+
+```console
+$ stk sync --cleanup
+✓ main fast-forwarded by 1 commit(s)
+
+The following branches add nothing to main:
+
+    sc-123/api
+
+✓ Reparented sc-123/service onto main
+✓ Removed sc-123/api
+```
+
+Branches checked out in a worktree are never deleted, only reported.
+
 ## How the metadata is stored
 
 Everything lives inside the repository and is shared by every worktree:
@@ -613,8 +646,9 @@ commits belong to the branch.
 
 - never silently overwrites a diverged trunk;
 - never chooses a stack parent for you;
-- never deletes a branch git cannot prove is contained in trunk, or — when
-  folding — in the branch that absorbs it;
+- never deletes a branch git cannot prove adds nothing to trunk — either its
+  commits are already in trunk, or its content is identical to trunk's — or,
+  when folding, that its commits live on in the branch that absorbs it;
 - never deletes or rewrites a branch checked out in another worktree;
 - never loses your uncommitted changes: it parks them, puts them back, and
   leaves them in the stash list if they will not reapply (`--no-autostash` to

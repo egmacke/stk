@@ -667,8 +667,21 @@ nothing, and without the content check the branch would only be noticed on the
 *next* sync — after a restack had rebased it into emptiness.
 
 Restacking removes merged work from the branches above too, without being
-asked: `git rebase` drops a commit whose change is already upstream, so a
-squash-merged commit does not come back as a duplicate on its children.
+asked. `git rebase` drops a commit whose change is already upstream, which
+covers a merge or a rebase — but **not** a squash, where several commits become
+one and no patch matches. Replaying those on top of their own merged result is
+nothing but conflicts, for work that is already in, so `stk` recognises the
+shape and collapses the branch onto its parent instead:
+
+```console
+$ stk restack
+✓ sc-123/api is already in main; its own commits went in with the merge
+✓ sc-123/service
+```
+
+`sc-123/api` is then plainly contained in trunk, so the next `stk sync
+--cleanup` can take it away, and everything above it has been rebased onto the
+squashed commit exactly once.
 
 ```console
 $ stk sync --cleanup

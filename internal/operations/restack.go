@@ -19,6 +19,9 @@ const (
 	OutcomeRestacked Outcome = "restacked"
 	OutcomeSkipped   Outcome = "skipped"
 	OutcomeBlocked   Outcome = "blocked"
+	// OutcomeMerged is a branch whose own work a squash merge already landed,
+	// so it was collapsed onto its parent rather than replayed.
+	OutcomeMerged Outcome = "merged"
 )
 
 // Summary counts the outcomes of a restack run.
@@ -212,6 +215,10 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 		case OutcomeRestacked:
 			sum.Restacked++
 			env.Out.OK("%s", b.Name)
+		case OutcomeMerged:
+			sum.Restacked++
+			env.Out.OK("%s is already in %s; its own commits went in with the merge",
+				b.Name, trunkOf(b).Name)
 		case OutcomeSkipped:
 			sum.Skipped++
 		case OutcomeBlocked:
@@ -310,6 +317,28 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 		return OutcomeSkipped, nil
 	}
 
+	// A squash merge lands a branch's content under a commit of its own, so
+	// none of its patches is recognised as upstream and a rebase replays them
+	// on top of their own merged result: conflicts, for work that is already
+	// in. Identical content is the proof there is nothing left to replay, so
+	// the branch is moved to its parent's tip instead of rebased.
+	if squashMerged(repo, b, childTip) {
+		if err := op.Snapshot(repo, b); err != nil {
+			return "", err
+		}
+		if err := op.Save(repo); err != nil {
+			return "", err
+		}
+		if err := resetBranch(env, b, newBase); err != nil {
+			return "", err
+		}
+		if err := stack.SetBase(repo, b.ID, newBase); err != nil {
+			return "", err
+		}
+		b.SHA, b.Base = newBase, newBase
+		return OutcomeMerged, nil
+	}
+
 	oldBase := b.Base
 	if !repo.IsAncestor(oldBase, childTip) {
 		return "", fmt.Errorf(
@@ -353,6 +382,48 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 		return "", err
 	}
 	return OutcomeRestacked, nil
+}
+
+// trunkOf walks up to the trunk node above a branch.
+func trunkOf(b *stack.Branch) *stack.Branch {
+	for p := b; p != nil; p = p.Parent {
+		if p.IsTrunk {
+			return p
+		}
+	}
+	return nil
+}
+
+// squashMerged reports whether a branch's own work is already in trunk under a
+// commit it does not share: the shape a squash merge leaves behind.
+//
+// Ancestry says no, because the commit is a new one; identical content says
+// the branch has nothing of its own left to contribute.
+func squashMerged(repo *git.Repo, b *stack.Branch, tip string) bool {
+	trunk := trunkOf(b)
+	if trunk == nil || trunk.SHA == "" || tip == "" {
+		return false
+	}
+	if repo.IsAncestor(tip, trunk.SHA) {
+		// Plainly merged; a rebase drops these commits without complaint.
+		return false
+	}
+	if repo.CountCommits(b.Base, tip) == 0 {
+		// Nothing of its own, so nothing to mistake for merged work.
+		return false
+	}
+	return repo.SameTree(trunk.SHA, tip)
+}
+
+// resetBranch moves a branch to a commit, taking the working tree with it when
+// that is the branch checked out here.
+func resetBranch(env *Env, b *stack.Branch, sha string) error {
+	repo := env.Repo
+	if repo.CurrentBranch() == b.Name {
+		// The working tree is clean by now, so this discards nothing.
+		return repo.R.Mutate("reset", "--hard", "--quiet", sha).Error()
+	}
+	return repo.UpdateRef("refs/heads/"+b.Name, sha)
 }
 
 // finishBranch records the new tip and base after a successful rebase.

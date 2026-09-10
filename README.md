@@ -60,17 +60,17 @@ stk restack
 | Command | What it does |
 | --- | --- |
 | `stk init` | Record trunk and the default remote |
-| `stk create <branch> [--from <parent>]` | Create a branch and record its parent |
+| `stk create [branch] [--from <parent>]` | Create a branch and record its parent |
 | `stk checkout [branch]`, `stk co` | Switch branches; interactive picker with no argument |
 | `stk show` | The same viewer, without implying checkout is the goal |
 | `stk stack [--all] [--json]` | Print the current stack |
 | `stk info [branch] [--json]` | Everything stk knows about a branch |
 | `stk parent` / `stk children` | Print the immediate relatives of a branch |
 | `stk up [n]` / `stk down [n]` / `stk top` / `stk bottom` | Navigate the stack |
-| `stk track <branch> --parent <p>` | Adopt an existing branch into the graph |
+| `stk track [branch] [--parent <p>]` | Adopt an existing branch into the graph |
 | `stk untrack [branch]` | Drop metadata; the git branch is never deleted |
-| `stk rename [old] <new>` | Rename without breaking the stack |
-| `stk move [branch] --onto <p>` | Re-parent a branch and restack above it |
+| `stk rename [old] [new]` | Rename without breaking the stack |
+| `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
@@ -162,6 +162,36 @@ trunk.
 
 `--cwd` and `--json` make `stk` easy to drive from scripts, editors and coding
 agents. Without a terminal, `stk` never opens an interactive selector.
+
+## Missing arguments
+
+Commands that need a value ask for it rather than printing usage. `stk create`
+asks for the branch name; `stk rename` asks for the new name; `stk track` and
+`stk move` open the branch picker to choose a parent, offering only branches
+that cannot create a cycle:
+
+```bash
+stk create                  # Name for the new branch:
+stk rename                  # New name for api:
+stk track loose             # picker: Parent of loose
+stk move web                # picker: Move web onto
+```
+
+Dismissing a prompt changes nothing and exits successfully. With
+`--no-interactive` the missing value stays an error, so scripts still fail
+loudly:
+
+```console
+$ stk --no-interactive create
+stk: no branch name given
+
+Run:
+
+    stk create <branch>
+```
+
+With `--interactive` but no terminal — a pipe, or an agent — the value is read
+from stdin as a line of text instead of opening the picker.
 
 ## How the metadata is stored
 

@@ -14,6 +14,10 @@ import (
 // ErrCancelled is returned when the user dismisses an interactive prompt.
 var ErrCancelled = errors.New("cancelled")
 
+// stdin is shared by every prompt: a reader buffers past the newline it was
+// asked for, so a fresh one per question would swallow the answer to the next.
+var stdin = bufio.NewReader(os.Stdin)
+
 // IsTerminal reports whether the process is attached to an interactive
 // terminal on both stdin and stdout.
 func IsTerminal() bool {
@@ -26,13 +30,11 @@ func Confirm(question string, defaultYes bool) (bool, error) {
 	if defaultYes {
 		suffix = "(Y/n)"
 	}
-	fmt.Fprintf(os.Stderr, "%s %s ", question, suffix)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	line, err := ask(fmt.Sprintf("%s %s", question, suffix))
+	if err != nil {
 		return false, err
 	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
+	switch strings.ToLower(line) {
 	case "":
 		return defaultYes, nil
 	case "y", "yes":
@@ -42,4 +44,29 @@ func Confirm(question string, defaultYes bool) (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+// ReadLine asks an open question on stderr and returns the trimmed answer.
+//
+// An empty answer, or end of input, is treated as a cancellation rather than
+// as a value: stk never acts on a name the user did not type.
+func ReadLine(question string) (string, error) {
+	answer, err := ask(question)
+	if err != nil {
+		return "", err
+	}
+	if answer == "" {
+		return "", ErrCancelled
+	}
+	return answer, nil
+}
+
+// ask writes a question to stderr and reads one line of the answer.
+func ask(question string) (string, error) {
+	fmt.Fprintf(os.Stderr, "%s ", question)
+	line, err := stdin.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
 }

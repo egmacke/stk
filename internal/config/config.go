@@ -14,11 +14,16 @@ import (
 // Version is the metadata layout version written by this build.
 const Version = 1
 
+// AutostashDefault is what stk does with uncommitted changes when the
+// repository has expressed no preference: park them and put them back.
+const AutostashDefault = true
+
 const (
 	KeyVersion = "stk.version"
 	KeyTrunk   = "stk.trunk"
 	KeyRemote  = "stk.remote"
-	// KeyAutostash turns --autostash on for every command that accepts it.
+	// KeyAutostash turns autostashing off for every command that accepts it
+	// when set to false. It is on unless the repository says otherwise.
 	KeyAutostash = "stk.autostash"
 )
 
@@ -28,7 +33,8 @@ type Config struct {
 	Trunk   string
 	Remote  string
 	// Autostash makes commands that need a clean working tree park
-	// uncommitted changes instead of refusing to run.
+	// uncommitted changes instead of refusing to run. It defaults to true;
+	// stk.autostash = false turns it off repository-wide.
 	Autostash bool
 }
 
@@ -52,7 +58,7 @@ func Load(repo *git.Repo) (cfg Config, ok bool, err error) {
 		Trunk:   repo.ConfigGet(KeyTrunk),
 		Remote:  repo.ConfigGet(KeyRemote),
 	}
-	autostash, convErr := repo.ConfigBool(KeyAutostash, false)
+	autostash, convErr := repo.ConfigBool(KeyAutostash, AutostashDefault)
 	if convErr != nil {
 		return cfg, true, convErr
 	}

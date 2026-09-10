@@ -47,7 +47,8 @@ func TestRestackAutostashRestoresChanges(t *testing.T) {
 	r.amend("a.txt", "a amended\n", "a amended")
 	r.write("README.md", "hello\nwork in progress\n")
 
-	out := r.stk("restack", "--autostash")
+	// No flag: stashing is what stk does by default.
+	out := r.stk("restack")
 	requireContains(t, out, "Stashed uncommitted changes")
 	requireContains(t, out, "Restored stashed changes")
 
@@ -57,18 +58,18 @@ func TestRestackAutostashRestoresChanges(t *testing.T) {
 	requireEqual(t, parkedStashes(r), 0, "no stash ref left behind")
 }
 
-func TestAutostashConfigAppliesAndIsOverridable(t *testing.T) {
+func TestAutostashConfigTurnsItOffAndFlagOverridesConfig(t *testing.T) {
 	r := newRepo(t)
 	buildStack(r, "a", "b")
 	r.stk("checkout", "a")
 	r.amend("a.txt", "a amended\n", "a amended")
-	r.git("config", "--local", "stk.autostash", "true")
+	r.git("config", "--local", "stk.autostash", "false")
 	r.write("README.md", "hello\nwork in progress\n")
 
-	out := r.stkFail("restack", "--no-autostash")
-	requireContains(t, out, "uncommitted changes")
+	out := r.stkFail("restack")
+	requireContains(t, out, "stk.autostash = false")
 
-	out = r.stk("restack")
+	out = r.stk("restack", "--autostash")
 	requireContains(t, out, "Stashed uncommitted changes")
 	requireEqual(t, r.fileContent("README.md"), "hello\nwork in progress\n", "changes came back")
 
@@ -160,11 +161,11 @@ func TestCheckoutAutostashCarriesChangesAcross(t *testing.T) {
 	// the branches and the working tree has edited it.
 	r.write("f.txt", lines(20, map[int]string{20: "TWENTY"}))
 
-	out := r.stkFail("checkout", "top")
+	out := r.stkFail("checkout", "top", "--no-autostash")
 	requireContains(t, out, "would be overwritten")
 	requireEqual(t, r.currentBranch(), "main", "the refused checkout changed nothing")
 
-	out = r.stk("checkout", "top", "--autostash")
+	out = r.stk("checkout", "top")
 	requireContains(t, out, "Switched to top")
 	requireContains(t, out, "Carried your uncommitted changes across")
 	requireEqual(t, r.currentBranch(), "top", "switched")
@@ -183,7 +184,7 @@ func TestCheckoutAutostashRollsBackOnConflict(t *testing.T) {
 	mine := lines(20, map[int]string{10: "MINE"})
 	r.write("f.txt", mine)
 
-	out := r.stkFail("checkout", "top", "--autostash")
+	out := r.stkFail("checkout", "top")
 	requireContains(t, out, "conflict with top")
 	requireContains(t, out, "Nothing was switched")
 	requireEqual(t, r.currentBranch(), "main", "still on the original branch")

@@ -4,15 +4,13 @@ import (
 	"errors"
 
 	"github.com/spf13/cobra"
-
-	"stk/internal/config"
 )
 
 // autostashPref is the --autostash/--no-autostash pair.
 //
 // Neither flag is a mere boolean: with both absent the repository's
-// stk.autostash setting decides, so --no-autostash has to be able to say no to
-// a standing yes.
+// stk.autostash setting decides, and that defaults to on, so each flag has to
+// be able to contradict the other's standing answer.
 type autostashPref struct {
 	on  bool
 	off bool
@@ -24,9 +22,9 @@ type autostashPref struct {
 // is not a thing a slipped letter should switch on or off.
 func (p *autostashPref) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&p.on, "autostash", false,
-		"stash uncommitted changes for the duration and restore them afterwards")
+		"stash uncommitted changes for the duration and restore them afterwards (the default)")
 	cmd.Flags().BoolVar(&p.off, "no-autostash", false,
-		"leave uncommitted changes alone even when "+config.KeyAutostash+" is set")
+		"refuse to run with uncommitted changes instead of stashing them")
 }
 
 // apply resolves the flags against the repository setting.

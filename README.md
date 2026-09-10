@@ -71,7 +71,7 @@ stk restack
 | `stk untrack [branch]` | Drop metadata; the git branch is never deleted |
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
-| `stk restack [--up\|--only] [--autostash]` | Rebase branches onto their parents |
+| `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
@@ -222,30 +222,42 @@ from stdin as a line of text instead of opening the picker.
 
 ## Uncommitted changes
 
-By default `stk` follows git. Navigation carries your changes across if git
-can, and refuses if it cannot; the commands that rewrite history stop before
-they start:
+You do not have to commit or stash before moving around a stack. When a
+command needs a clean working tree, or when git refuses to carry your changes
+onto the branch you asked for, `stk` parks them, does the work, and puts them
+back:
 
 ```console
 $ stk restack
+✓ Stashed uncommitted changes
+Restacking the stack containing api...
+
+✓ api
+✓ service
+
+1 restacked, 1 already current.
+✓ Restored stashed changes
+```
+
+This applies to `create`, `checkout`, `show`, `up`, `down`, `top`, `bottom`,
+`move`, `restack` and `sync`. Nothing is parked when the tree is already clean,
+or when git can carry the changes across on its own — that path is left exactly
+as git behaves.
+
+To have a command refuse instead, per invocation or repository-wide:
+
+```bash
+stk restack --no-autostash          # for this run
+git config stk.autostash false      # for this repository; --autostash overrides
+```
+
+```console
+$ stk restack --no-autostash
 stk: working tree has uncommitted changes
 
-Commit or stash them first, or re-run with --autostash to have stk
-park them for the operation and put them back afterwards
-```
-
-`--autostash` parks the changes, runs the command, and puts them back:
-
-```bash
-stk restack --autostash
-stk checkout other --autostash
-```
-
-It is accepted by `create`, `checkout`, `show`, `up`, `down`, `top`, `bottom`,
-`move`, `restack` and `sync`. To make it the default for all of them:
-
-```bash
-git config stk.autostash true      # --no-autostash still overrides it
+Autostashing is off (--no-autostash, or stk.autostash = false), so stk
+will not park them for you. Commit or stash them first, or re-run with
+--autostash
 ```
 
 Only tracked changes are parked, exactly as with `git rebase --autostash`:
@@ -297,7 +309,9 @@ commits belong to the branch.
 - never chooses a stack parent for you;
 - never deletes a branch git cannot prove is contained in trunk;
 - never deletes or rewrites a branch checked out in another worktree;
-- never stashes your changes unless you ask with `--autostash`;
+- never loses your uncommitted changes: it parks them, puts them back, and
+  leaves them in the stash list if they will not reapply (`--no-autostash` to
+  refuse the operation instead);
 - never rewrites a branch whose recorded base cannot be validated;
 - never flattens merge commits without `--rebase-merges`;
 - never hides a git conflict;

@@ -58,9 +58,9 @@ func requireNoOperation(env *Env) error { return RequireNoOperation(env.Repo) }
 
 // requireCleanTree refuses history rewriting while the worktree has changes.
 //
-// stk never stashes unasked, so by the time a command reaches here it has
-// already called Stash: with --autostash the tree is clean again, and without
-// it the changes are the user's to deal with.
+// Every command calls Stash before it reaches here, so a dirty tree at this
+// point means autostashing was turned off and the changes are the user's to
+// deal with.
 func requireCleanTree(env *Env) error {
 	clean, err := env.Repo.IsClean()
 	if err != nil {
@@ -74,8 +74,9 @@ func requireCleanTree(env *Env) error {
 		return nil
 	}
 	return errors.New("working tree has uncommitted changes\n\n" +
-		"Commit or stash them first, or re-run with --autostash to have stk\n" +
-		"park them for the operation and put them back afterwards")
+		"Autostashing is off (--no-autostash, or stk.autostash = false), so stk\n" +
+		"will not park them for you. Commit or stash them first, or re-run with\n" +
+		"--autostash")
 }
 
 // noteDryRunStash says what a real run would have parked. A dry run parks

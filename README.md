@@ -73,7 +73,7 @@ stk restack
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
-| `stk submit [branch] [--pull] [--draft] [--stack]` | Push to the remote, optionally opening pull requests |
+| `stk submit [branch] [--pull] [--draft] [--stack]`, `stk ss` | Push to the remote, optionally opening pull requests |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
@@ -94,12 +94,18 @@ stk commit -am foo  # runs: git commit -am foo
 | `r` | `restack` | `tr` | `track` |
 | `utr` | `untrack` | `rn` | `rename` |
 | `cont` | `continue` | `ab` | `abort` |
+| `ss` | `submit --stack` | | |
 
 ```bash
 stk c sc-123/api
 stk r --up
 stk cont
+stk ss              # refresh every pushed branch of the stack
+stk ss -pn          # ... and propose the whole stack
 ```
+
+`ss` is the only short form that carries a flag of its own; every other flag
+still applies through it.
 
 A short form is a native stk command and always wins over the git passthrough,
 including over a git alias of the same name. To reach a git command that shares
@@ -110,9 +116,9 @@ stk -- r            # runs: git r
 stk -- log --oneline
 ```
 
-Only these eight names are claimed. Everything else stays available to git, so
+Only these nine names are claimed. Everything else stays available to git, so
 `stk mv`, `stk st`, `stk s` and any git alias of yours still pass straight
-through. There is no prefix matching: `stk resta` is a git command, not
+through — `stk s` is git's, so `git s` aliased to `status` keeps working. There is no prefix matching: `stk resta` is a git command, not
 `restack`. User-defined aliases remain a phase-two item; write shell or git
 aliases in the meantime.
 

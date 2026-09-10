@@ -15,6 +15,7 @@ var aliased = map[string]string{
 	"rn":   "rename",
 	"cont": "continue",
 	"ab":   "abort",
+	"ss":   "submit",
 }
 
 // notAliased lists short names stk deliberately does not claim. git does not

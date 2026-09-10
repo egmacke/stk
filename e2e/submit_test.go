@@ -353,6 +353,25 @@ func TestSubmitChecksGitHubLoginBeforePushingAnything(t *testing.T) {
 	requireContains(t, out, "Pushed api to origin")
 }
 
+func TestSSIsSubmitStack(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stk("ss")
+	for _, name := range []string{"api", "service", "ui"} {
+		requireContains(t, out, "Pushed "+name+" to origin")
+	}
+	requireContains(t, out, "3 branch(es) pushed")
+
+	// Every other flag still applies through the short form.
+	out = r.stk("ss", "-pn")
+	requireContains(t, out, "3 pull request(s) opened")
+	requireContains(t, out, "3 stack comment(s) written")
+	requireContains(t, r.prComments(2)[0], "2. #2 `service` ← this pull request")
+}
+
 func TestSubmitRefusesTrunk(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")

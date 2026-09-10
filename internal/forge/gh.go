@@ -125,6 +125,19 @@ func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {
 	return &prs[0], nil
 }
 
+// ClosePullRequest closes a pull request, saying why.
+//
+// The head branch is deliberately left on the remote: a closed pull request
+// can be reopened, and stk does not delete branches it did not create.
+func (g *GH) ClosePullRequest(number int, comment string) error {
+	args := []string{fmt.Sprintf("%d", number)}
+	if comment != "" {
+		args = append(args, "--comment", comment)
+	}
+	_, err := g.run("pr", "close", args...)
+	return err
+}
+
 // ReadyForReview takes a pull request out of draft, or with undo puts it back.
 func (g *GH) ReadyForReview(number int, undo bool) error {
 	args := []string{fmt.Sprintf("%d", number)}

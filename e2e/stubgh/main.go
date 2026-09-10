@@ -129,6 +129,8 @@ func main() {
 		createPR(args[2:])
 	case "pr ready":
 		readyPR(args[2:])
+	case "pr close":
+		closePR(args[2:])
 	default:
 		if args[0] == "api" {
 			api(args[1:])
@@ -153,7 +155,7 @@ func listPRs(args []string) {
 	head := values["head"]
 	s := load()
 	for _, pr := range s.PRs {
-		if pr.Head == head {
+		if pr.Head == head && pr.State == "OPEN" {
 			out, _ := json.Marshal([]pullRequest{pr})
 			fmt.Println(string(out))
 			return
@@ -188,20 +190,7 @@ func createPR(args []string) {
 
 func readyPR(args []string) {
 	values, switches := flags(args)
-	number := ""
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") && values["repo"] != a {
-			number = a
-			break
-		}
-	}
-	if number == "" {
-		fail("no pull request number in: %s", strings.Join(args, " "))
-	}
-	n, err := strconv.Atoi(number)
-	if err != nil {
-		fail("bad pull request number %q", number)
-	}
+	n := prNumber(args, values)
 	s := load()
 	for i := range s.PRs {
 		if s.PRs[i].Number == n {
@@ -211,6 +200,51 @@ func readyPR(args []string) {
 		}
 	}
 	fail("no pull request %d", n)
+}
+
+func closePR(args []string) {
+	values, _ := flags(args)
+	n := prNumber(args, values)
+	s := load()
+	for i := range s.PRs {
+		if s.PRs[i].Number == n {
+			s.PRs[i].State = "CLOSED"
+			if c := values["comment"]; c != "" {
+				key := strconv.Itoa(n)
+				s.Comments[key] = append(s.Comments[key], comment{ID: s.NextComment, Body: c, Login: "tester"})
+				s.NextComment++
+			}
+			s.save()
+			return
+		}
+	}
+	fail("no pull request %d", n)
+}
+
+// prNumber picks the positional pull request number out of the arguments.
+func prNumber(args []string, values map[string]string) int {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		skip := false
+		for _, v := range values {
+			if v == a {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		n, err := strconv.Atoi(a)
+		if err != nil {
+			continue
+		}
+		return n
+	}
+	fail("no pull request number in: %s", strings.Join(args, " "))
+	return 0
 }
 
 // api answers the comment endpoints stk uses:

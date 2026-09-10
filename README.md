@@ -72,6 +72,7 @@ stk restack
 | `stk untrack [branch]` | Drop metadata; the git branch is never deleted |
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
+| `stk fold [branch] [--into <b>\|--stack]` | Collapse stacked branches into one |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk submit [branch] [--pull] [--draft] [--stack]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
 | `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
@@ -317,6 +318,68 @@ Log in with:
 Nothing about a pull request is stored in the repository — `stk` keeps no PR
 numbers, no status and no token.
 
+## Folding a stack
+
+Sometimes a stack turns out to be one change. `stk fold` collapses a run of
+branches into the lowest one:
+
+```console
+$ stk fold --into sc-123/api
+Folding into sc-123/api:
+
+    sc-123/service   1 commit(s), deleted
+    sc-123/ui        2 commit(s), deleted
+
+sc-123/api keeps its own base and ends up with 4 commit(s).
+sc-123/polish is reparented onto sc-123/api.
+
+Fold 2 branch(es) into sc-123/api? (Y/n)
+✓ sc-123/api now ends at 6f46091
+✓ Reparented sc-123/polish onto sc-123/api
+✓ Folded and deleted sc-123/ui (was 6f46091)
+✓ Folded and deleted sc-123/service (was 2d5cb8f)
+```
+
+| Command | Effect |
+| --- | --- |
+| `stk fold` | the current branch into its parent |
+| `stk fold --into <branch>` | everything from here down into that branch |
+| `stk fold --stack`, `-s` | the whole stack into its lowest branch |
+| `--yes`, `-y` | do not ask before deleting |
+| `--close-pulls` | close the folded branches' pull requests too |
+
+**Nothing is squashed and nothing is rebased.** In a consistent stack the top
+branch already contains every commit below it, so a fold only fast-forwards
+the surviving branch's ref up to it — which is also how `stk` can prove the
+fold loses nothing. A stack that needs a restack is refused rather than
+folded:
+
+```console
+$ stk fold
+stk: sc-123/ui does not contain sc-123/service, so folding would rewrite history
+
+Restack the stack first:
+
+    stk restack
+```
+
+The commits keep their identity, so the folded branch names are the only thing
+lost — and `stk` prints the command that brings each one back:
+
+```text
+Recover a folded branch with:
+
+    git branch sc-123/ui 6f46091
+```
+
+A branching stack cannot be folded into one branch, and `stk` says so rather
+than choosing a side. Branches held by another worktree are refused too. The
+remote is untouched: publish the result with `stk submit`, which force-pushes
+the survivor under a lease. With `--close-pulls` the folded branches' pull
+requests are closed with a comment pointing at the one that absorbed them;
+their remote branches are left alone, since a closed pull request can be
+reopened and a deleted branch cannot.
+
 ## Status markers
 
 ```text
@@ -357,6 +420,7 @@ init     -t --trunk        -r --remote
 track    -p --parent
 untrack  -p --reparent     -r --recursive
 move     -o --onto
+fold     -s --stack        -y --yes
 restack  -u --up           -o --only
 submit   -p --pull         -d --draft       -n --no-prompt   -s --stack
 ready    -s --stack
@@ -377,7 +441,8 @@ stk create api -fmain  # --from main, value attached
 
 `--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
 `--autostash`, `--no-autostash`, `--no-comment`, `--draft-from`,
-`--draft-branch`, `--undo` and `--rebase-merges` have none: a slipped letter
+`--draft-branch`, `--undo`, `--into`, `--close-pulls` and `--rebase-merges`
+have none: a slipped letter
 should not disable a safety, delete a branch, move someone's uncommitted work
 or change what a reviewer is looking at.
 
@@ -498,7 +563,8 @@ commits belong to the branch.
 
 - never silently overwrites a diverged trunk;
 - never chooses a stack parent for you;
-- never deletes a branch git cannot prove is contained in trunk;
+- never deletes a branch git cannot prove is contained in trunk, or — when
+  folding — in the branch that absorbs it;
 - never deletes or rewrites a branch checked out in another worktree;
 - never loses your uncommitted changes: it parks them, puts them back, and
   leaves them in the stash list if they will not reapply (`--no-autostash` to
@@ -534,7 +600,7 @@ main.go                 entry point
 cmd/                    cobra commands; no direct git orchestration
 internal/git/           the only code that runs git
 internal/stack/         metadata and the in-memory graph
-internal/operations/    create, track, rename, move, restack, submit, ready, sync, continue, abort
+internal/operations/    create, track, rename, move, fold, restack, submit, ready, sync, continue, abort
 internal/forge/         the only code that knows about GitHub, through gh
 internal/config/        repository-wide settings
 internal/ui/            branch picker, prompts, tree rendering

@@ -302,6 +302,7 @@ type ghStubState struct {
 		Base   string `json:"baseRefName"`
 		Head   string `json:"headRefName"`
 		Draft  bool   `json:"isDraft"`
+		State  string `json:"state"`
 	} `json:"prs"`
 	Comments map[string][]struct {
 		ID    int64  `json:"id"`

@@ -14,6 +14,9 @@ const (
 	PushForced PushOutcome = "forced"
 	// PushCurrent means the remote already had this commit.
 	PushCurrent PushOutcome = "current"
+	// PushLinked means nothing was sent: the commit was already published and
+	// only the local upstream link was missing.
+	PushLinked PushOutcome = "upstream recorded"
 )
 
 // RemoteBranchSHA returns the commit the remote-tracking ref points at, and
@@ -50,6 +53,12 @@ func (repo *Repo) Push(remote, branch, lease string, setUpstream bool) Result {
 	// Captured, with the real stdin attached: credential helpers must still
 	// reach the terminal while stk keeps control of what is printed.
 	return repo.R.Capture(args...)
+}
+
+// SetUpstream records a remote branch of the same name as this branch's
+// upstream, without contacting the remote.
+func (repo *Repo) SetUpstream(branch, remote string) error {
+	return repo.R.Mutate("branch", "--set-upstream-to="+remote+"/"+branch, branch).Error()
 }
 
 // RemoteURL returns the fetch URL configured for a remote.

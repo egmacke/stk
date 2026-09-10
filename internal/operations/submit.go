@@ -59,13 +59,19 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	}
 
 	pushed := 0
+	linked := 0
 	opened := 0
 	for _, b := range plan {
 		outcome, err := pushBranch(env, remote, b)
 		if err != nil {
 			return err
 		}
-		if outcome != git.PushCurrent {
+		switch outcome {
+		case git.PushCurrent:
+			// Nothing to report beyond the line pushBranch printed.
+		case git.PushLinked:
+			linked++
+		default:
 			pushed++
 		}
 		if !opts.Pull || !wanted[b.ID] {
@@ -81,7 +87,12 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	}
 
 	env.Out.Printf("")
-	env.Out.Printf("%s", submitSummary(env, len(plan), pushed, opened, opts))
+	env.Out.Printf("%s", submitSummary(env, submitCounts{
+		planned: len(plan),
+		pushed:  pushed,
+		linked:  linked,
+		opened:  opened,
+	}, opts))
 	return nil
 }
 
@@ -169,9 +180,17 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 			env.Out.Skip("%s is already on %s", b.Name, remote)
 			return git.PushCurrent, nil
 		}
-		// The commit is there but the branch has no upstream, so push anyway
-		// to record one.
-		outcome = git.PushUpdated
+		// The commit is published already and only the local upstream link is
+		// missing, which costs no round trip to record.
+		if env.DryRun {
+			env.Out.Printf("(dry-run) would record %s/%s as the upstream of %s", remote, b.Name, b.Name)
+			return git.PushLinked, nil
+		}
+		if err := repo.SetUpstream(b.Name, remote); err != nil {
+			return git.PushLinked, err
+		}
+		env.Out.OK("Recorded %s/%s as the upstream of %s", remote, b.Name, b.Name)
+		return git.PushLinked, nil
 	case repo.IsAncestor(remoteSHA, b.SHA):
 		outcome = git.PushUpdated
 	default:
@@ -299,24 +318,35 @@ func bulletBody(subjects []string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// submitCounts is what one submit run did.
+type submitCounts struct {
+	planned int
+	pushed  int
+	linked  int
+	opened  int
+}
+
 // submitSummary closes the run. A dry run reports in the conditional, because
 // it has published nothing.
-func submitSummary(env *Env, planned, pushed, opened int, opts SubmitOptions) string {
-	pushedVerb, openedVerb := "pushed", "opened"
+func submitSummary(env *Env, c submitCounts, opts SubmitOptions) string {
+	pushedVerb, openedVerb, linkedVerb := "pushed", "opened", "recorded"
 	if env.DryRun {
-		pushedVerb, openedVerb = "would be pushed", "would be opened"
+		pushedVerb, openedVerb, linkedVerb = "would be pushed", "would be opened", "would be recorded"
 	}
 	var parts []string
-	if pushed == 0 {
+	if c.pushed == 0 {
 		parts = append(parts, "Nothing to push")
 	} else {
-		parts = append(parts, fmt.Sprintf("%d branch(es) %s", pushed, pushedVerb))
+		parts = append(parts, fmt.Sprintf("%d branch(es) %s", c.pushed, pushedVerb))
 	}
-	if opts.Pull && opened > 0 {
-		parts = append(parts, fmt.Sprintf("%d pull request(s) %s", opened, openedVerb))
+	if c.linked > 0 {
+		parts = append(parts, fmt.Sprintf("%d upstream(s) %s", c.linked, linkedVerb))
 	}
-	if planned > pushed && pushed > 0 {
-		parts = append(parts, fmt.Sprintf("%d already up to date", planned-pushed))
+	if opts.Pull && c.opened > 0 {
+		parts = append(parts, fmt.Sprintf("%d pull request(s) %s", c.opened, openedVerb))
+	}
+	if accounted := c.pushed + c.linked; c.planned > accounted && accounted > 0 {
+		parts = append(parts, fmt.Sprintf("%d already up to date", c.planned-accounted))
 	}
 	if env.DryRun {
 		parts = append(parts, "nothing has been published")

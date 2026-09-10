@@ -37,6 +37,24 @@ func TestSubmitPushesTheBranch(t *testing.T) {
 	requireContains(t, out, "Nothing to push")
 }
 
+func TestSubmitRecordsAMissingUpstreamWithoutPushing(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stk("submit")
+	published := r.sha("api")
+
+	// The commit is on the remote, but the branch has forgotten where it went.
+	r.git("branch", "--unset-upstream", "api")
+	requireEqual(t, upstreamOf(r, "api"), "", "upstream cleared")
+
+	out := r.stk("submit")
+	requireContains(t, out, "Recorded origin/api as the upstream of api")
+	requireContains(t, out, "1 upstream(s) recorded")
+	requireNotContains(t, out, "Pushed api")
+	requireEqual(t, upstreamOf(r, "api"), "origin/api", "upstream recorded")
+	requireEqual(t, r.sha("refs/remotes/origin/api"), published, "the remote was left alone")
+}
+
 func TestSubmitPushesTheAncestorChain(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api", "service", "ui")

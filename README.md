@@ -151,6 +151,10 @@ $ stk submit
 1 branch(es) pushed.
 ```
 
+The remote branch becomes the branch's upstream, so `↑?` clears and git knows
+where it went. A branch whose commit the remote already holds but whose
+upstream is missing has that link recorded locally, with no push at all.
+
 A branch a restack has rewritten no longer fast-forwards, so `stk` pushes it
 with `--force-with-lease`: the remote branch is replaced only while it still
 holds the commit `stk` last published. If someone else has pushed in the

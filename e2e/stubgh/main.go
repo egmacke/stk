@@ -306,6 +306,32 @@ func api(args []string) {
 
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	s := load()
+	// The base of a pull request is changed through REST, because gh pr edit
+	// asks for scopes a base change does not need.
+	if method == "PATCH" && len(parts) == 5 && parts[3] == "pulls" {
+		base := ""
+		for i, a := range args {
+			if (a == "-f" || a == "--raw-field") && i+1 < len(args) {
+				if v, ok := strings.CutPrefix(args[i+1], "base="); ok {
+					base = v
+				}
+			}
+		}
+		n, err := strconv.Atoi(parts[4])
+		if err != nil {
+			fail("bad pull request number %q", parts[4])
+		}
+		for i := range s.PRs {
+			if s.PRs[i].Number == n {
+				s.PRs[i].Base = base
+				s.save()
+				out, _ := json.Marshal(s.PRs[i])
+				fmt.Println(string(out))
+				return
+			}
+		}
+		fail("no pull request %d", n)
+	}
 	switch {
 	case method == "GET" && len(parts) == 6 && parts[3] == "issues" && parts[5] == "comments":
 		// One JSON object per line, which is what gh's --jq projection emits.

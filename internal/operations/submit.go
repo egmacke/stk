@@ -322,11 +322,15 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 			// pointing at the wrong branch, and the diff then shows commits
 			// that belong to another review.
 			if existing.Base != "" && existing.Base != base {
+				// A failure here is loud but not fatal: the branch is pushed
+				// either way, and abandoning the rest of the stack half
+				// published would be the worse outcome.
 				if err := gh.RetargetPullRequest(existing.Number, base); err != nil {
-					return false, false, false, err
+					env.Out.Fail("could not retarget %s onto %s: %v", existing, base, err)
+				} else {
+					env.Out.OK("Retargeted %s from %s onto %s", existing, existing.Base, base)
+					retargeted = true
 				}
-				env.Out.OK("Retargeted %s from %s onto %s", existing, existing.Base, base)
-				retargeted = true
 			}
 			// The push is what brought it up to date; say which happened.
 			what := "is already open for"

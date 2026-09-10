@@ -143,8 +143,12 @@ func (g *GH) pullRequest(branch, state string) (*PullRequest, error) {
 // The base is the one thing stk maintains on a pull request it did not open:
 // it is structural, not authored, and a stale base makes the diff show commits
 // that belong to another review.
+//
+// This goes through the REST endpoint rather than "gh pr edit", which fetches
+// organisation and team metadata over GraphQL and so demands a read:org scope
+// that changing a base does not need.
 func (g *GH) RetargetPullRequest(number int, base string) error {
-	_, err := g.run("pr", "edit", fmt.Sprintf("%d", number), "--base", base)
+	_, err := g.api("PATCH", g.apiPath("/pulls/%d", number), "-f", "base="+base)
 	return err
 }
 

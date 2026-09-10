@@ -279,7 +279,7 @@ func TestSubmitRetargetsAStalePullRequestBase(t *testing.T) {
 	requireEqual(t, r.pullRequestBase(3), "api", "the base followed the stack")
 	// The edit carries the base and nothing else: title, body and draft state
 	// are the author's.
-	requireContains(t, r.ghCallLog(), "pr edit --repo example/repo 3 --base api")
+	requireContains(t, r.ghCallLog(), "--method PATCH /repos/example/repo/pulls/3 -f base=api")
 	requireEqual(t, r.pullRequestBase(2), "api", "an already-correct base is left alone")
 }
 

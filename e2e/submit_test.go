@@ -475,6 +475,12 @@ func TestSubmitPullWithoutATerminalNeedsNoPrompt(t *testing.T) {
 	requireContains(t, out, "--no-prompt")
 	requireNotContains(t, r.ghCallLog(), "pr create")
 	requireNotContains(t, remoteHeads(r), "refs/heads/api")
+
+	// ... but only when a pull request actually has to be described. With one
+	// already open there is nothing to ask, so the run goes ahead.
+	r.stk("submit", "--pull", "--no-prompt")
+	out = r.stk("--no-interactive", "submit", "--pull")
+	requireContains(t, out, "already open for api")
 }
 
 func TestSubmitChecksGitHubLoginBeforePushingAnything(t *testing.T) {

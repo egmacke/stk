@@ -64,9 +64,21 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	drafted := 0
 	drafts := map[string]bool{}
 	if opts.Pull {
-		// Settled before anything is pushed: a decision about the whole stack
-		// should not be taken halfway through publishing it.
-		if drafts, err = resolveDrafts(env, gh, g, plan, wanted, prs, opts); err != nil {
+		// What is already open decides everything that follows, and it is
+		// read before the first push: a question about the whole stack should
+		// not be asked halfway through publishing it, and a run that cannot
+		// answer one should fail before it has published anything.
+		missing, err := missingPullRequests(gh, plan, wanted, prs)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 && !opts.NoPrompt && env.AskPullRequest == nil {
+			return fmt.Errorf(
+				"%s needs a title and body for its pull request, and stk cannot ask\n\n"+
+					"Generate them instead:\n\n    stk submit --pull --no-prompt",
+				missing[0].Name)
+		}
+		if drafts, err = resolveDrafts(env, g, plan, missing, opts); err != nil {
 			return err
 		}
 	}
@@ -332,32 +344,39 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 	return true, nil
 }
 
+// missingPullRequests lists the branches stk was asked to propose that have no
+// open pull request yet, in stack order.
+//
+// A dry run asks too: it is the only way to say what a real run would open.
+func missingPullRequests(gh *forge.GH, plan []*stack.Branch, wanted map[string]bool, prs *pullRequestCache) ([]*stack.Branch, error) {
+	var missing []*stack.Branch
+	for _, b := range plan {
+		if !wanted[b.ID] {
+			continue
+		}
+		pr, err := prs.open(gh, b.Name)
+		if err != nil {
+			return nil, err
+		}
+		if pr == nil {
+			missing = append(missing, b)
+		}
+	}
+	return missing, nil
+}
+
 // resolveDrafts works out which pull requests open as drafts.
 //
 // With no preference given, and more than one pull request to open, stk asks
 // for the cut line: a stack is usually ready at the bottom and still being
 // written at the top, so one question settles every branch.
-func resolveDrafts(env *Env, gh *forge.GH, g *stack.Graph, plan []*stack.Branch, wanted map[string]bool, prs *pullRequestCache, opts SubmitOptions) (map[string]bool, error) {
+func resolveDrafts(env *Env, g *stack.Graph, plan, missing []*stack.Branch, opts SubmitOptions) (map[string]bool, error) {
 	if err := opts.Drafts.Validate(); err != nil {
 		return nil, err
 	}
 	choice := opts.Drafts
 	if choice.Empty() && !opts.NoPrompt && env.AskDraftCutLine != nil && !env.DryRun {
-		// Only the branches that will actually get a new pull request are
-		// worth asking about, and only if there is a choice to make.
-		var missing []*stack.Branch
-		for _, b := range plan {
-			if !wanted[b.ID] {
-				continue
-			}
-			pr, err := prs.open(gh, b.Name)
-			if err != nil {
-				return nil, err
-			}
-			if pr == nil {
-				missing = append(missing, b)
-			}
-		}
+		// Only a real choice is worth a question.
 		if len(missing) > 1 {
 			cut, err := env.AskDraftCutLine(draftCandidates(g, missing))
 			if err != nil {

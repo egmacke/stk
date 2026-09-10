@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -70,11 +69,11 @@ func newSubmitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if pull && !noPrompt {
-				if !Interactive() {
-					return errors.New("a pull request needs a title and body, and stk cannot ask\n\n" +
-						"Generate them instead:\n\n    stk submit --pull --no-prompt")
-				}
+			if pull && !noPrompt && Interactive() {
+				// Whether the questions are actually needed depends on what
+				// is already open, which only the operation knows; it fails
+				// before publishing anything if it needs an answer stk cannot
+				// give.
 				a.Env.AskPullRequest = askPullRequest
 				a.Env.AskDraftCutLine = askDraftCutLine(a)
 			}

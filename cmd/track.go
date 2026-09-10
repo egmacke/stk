@@ -45,7 +45,7 @@ func newTrackCmd() *cobra.Command {
 		},
 		ValidArgsFunction: branchNameCompletion,
 	}
-	cmd.Flags().StringVar(&parent, "parent", "", "logical parent `branch`")
+	cmd.Flags().StringVarP(&parent, "parent", "p", "", "logical parent `branch`")
 	_ = cmd.RegisterFlagCompletionFunc("parent", branchNameCompletion)
 	return cmd
 }
@@ -74,8 +74,8 @@ func newUntrackCmd() *cobra.Command {
 		},
 		ValidArgsFunction: branchNameCompletion,
 	}
-	cmd.Flags().BoolVar(&recursive, "recursive", false, "also untrack every branch stacked above it")
-	cmd.Flags().StringVar(&reparent, "reparent", "", "move its children onto `branch` first")
+	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "also untrack every branch stacked above it")
+	cmd.Flags().StringVarP(&reparent, "reparent", "p", "", "move its children onto `branch` first")
 	_ = cmd.RegisterFlagCompletionFunc("reparent", branchNameCompletion)
 	return cmd
 }

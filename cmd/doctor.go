@@ -57,7 +57,7 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the report as JSON")
+	cmd.Flags().BoolVarP(&asJSON, "json", "j", false, "print the report as JSON")
 	return cmd
 }
 

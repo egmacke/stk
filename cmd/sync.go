@@ -45,7 +45,7 @@ func newSyncCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&stackOnly, "stack", false, "only restack the stack containing the current branch")
+	cmd.Flags().BoolVarP(&stackOnly, "stack", "s", false, "only restack the stack containing the current branch")
 	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "fetch, update trunk and clean up without rewriting branches")
 	cmd.Flags().BoolVar(&noCleanup, "no-cleanup", false, "never delete merged branches")
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "delete merged branches without prompting")

@@ -30,8 +30,8 @@ func newStackCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "show every stack, plus untracked branches")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the stack as JSON")
-	cmd.Flags().BoolVar(&legend, "legend", false, "explain the status markers")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "show every stack, plus untracked branches")
+	cmd.Flags().BoolVarP(&asJSON, "json", "j", false, "print the stack as JSON")
+	cmd.Flags().BoolVarP(&legend, "legend", "l", false, "explain the status markers")
 	return cmd
 }

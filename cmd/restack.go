@@ -83,8 +83,8 @@ func newRestackCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&up, "up", false, "restack the current branch and its descendants only")
-	cmd.Flags().BoolVar(&only, "only", false, "restack the current branch only")
+	cmd.Flags().BoolVarP(&up, "up", "u", false, "restack the current branch and its descendants only")
+	cmd.Flags().BoolVarP(&only, "only", "o", false, "restack the current branch only")
 	cmd.Flags().BoolVar(&rebaseMerges, "rebase-merges", false, "preserve merge commits instead of refusing to flatten them")
 	return cmd
 }

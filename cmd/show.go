@@ -51,7 +51,7 @@ func newShowCmd() *cobra.Command {
 			return switchTo(a, chosen)
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the stack graph as JSON")
+	cmd.Flags().BoolVarP(&asJSON, "json", "j", false, "print the stack graph as JSON")
 	cmd.Flags().BoolVar(&noSelect, "no-select", false, "browse without offering to check out")
 	return cmd
 }

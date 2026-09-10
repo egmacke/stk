@@ -1,6 +1,9 @@
 package git
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // PushOutcome says what a push did to the remote branch.
 type PushOutcome string
@@ -78,6 +81,29 @@ func (repo *Repo) CommitSubjects(from, to string) []string {
 		return nil
 	}
 	return res.Lines()
+}
+
+// Commit is one commit, reduced to what stk shows a user.
+type Commit struct {
+	SHA     string
+	Subject string
+}
+
+// Commits lists the commits in from..to, oldest first.
+func (repo *Repo) Commits(from, to string) []Commit {
+	res := repo.R.Run("log", "--reverse", "--format=%H%x00%s", from+".."+to)
+	if !res.OK() {
+		return nil
+	}
+	var out []Commit
+	for _, line := range res.Lines() {
+		sha, subject, ok := strings.Cut(line, "\x00")
+		if !ok {
+			continue
+		}
+		out = append(out, Commit{SHA: sha, Subject: subject})
+	}
+	return out
 }
 
 // CommitBody returns the message body, without the subject, of one commit.

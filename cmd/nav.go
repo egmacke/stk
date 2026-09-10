@@ -157,7 +157,7 @@ func choose(a *app, candidates []*stack.Branch, title string) (*stack.Branch, er
 		}
 		return nil, fmt.Errorf("several branches match and stk is not attached to a terminal:\n\n    %s\n\nName one explicitly with stk checkout", strings.Join(names, "\n    "))
 	}
-	chosen, err := ui.Pick(ui.PickOptions{Graph: a.Graph, Title: title, Candidates: candidates})
+	chosen, err := ui.Pick(ui.PickOptions{Graph: a.Graph, Title: title, Verb: "checkout", Candidates: candidates})
 	if err != nil {
 		return nil, err
 	}

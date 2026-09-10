@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -11,16 +11,14 @@ import (
 func newTrackCmd() *cobra.Command {
 	var parent string
 	cmd := &cobra.Command{
-		Use:     "track [branch] --parent <branch>",
+		Use:     "track [branch] [--parent <branch>]",
 		Aliases: []string{"tr"},
 		Short:   "Bring an existing branch into the stack graph",
 		Long: "The parent must be trunk or a branch stk already tracks. The initial base\n" +
-			"is the merge base of the two branches. stk never infers a parent on its own.",
+			"is the merge base of the two branches. stk never infers a parent on its own,\n" +
+			"but it will ask for one when --parent is omitted.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if parent == "" {
-				return errors.New("--parent is required; stk will not guess a stack parent")
-			}
 			a, err := open()
 			if err != nil {
 				return err
@@ -28,6 +26,20 @@ func newTrackCmd() *cobra.Command {
 			b, err := a.resolveBranchArg(args)
 			if err != nil {
 				return err
+			}
+			if parent == "" {
+				parent, err = promptBranch(a.Graph, branchPrompt{
+					Title:      fmt.Sprintf("Parent of %s", b.Name),
+					Candidates: parentCandidates(a.Graph, b),
+					Missing:    "--parent is required; stk will not guess a stack parent",
+					Empty:      fmt.Sprintf("no branch can be the parent of %s", b.Name),
+				})
+				if cancelled(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
 			}
 			return operations.Track(a.Env, a.Graph, b.Name, parent)
 		},

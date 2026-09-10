@@ -14,6 +14,8 @@ type PickOptions struct {
 	Graph *stack.Graph
 	// Title is shown above the list.
 	Title string
+	// Verb names what enter does, for the key hint. Defaults to "select".
+	Verb string
 	// Candidates restricts selection to a specific set, rendered flat. When
 	// empty the whole stack graph is shown.
 	Candidates []*stack.Branch
@@ -254,7 +256,11 @@ func (m *pickerModel) View() string {
 	if m.opts.ReadOnly {
 		b.WriteString("esc quit\n")
 	} else {
-		b.WriteString("enter checkout   esc cancel\n")
+		verb := m.opts.Verb
+		if verb == "" {
+			verb = "select"
+		}
+		fmt.Fprintf(&b, "enter %s   esc cancel\n", verb)
 	}
 	return b.String()
 }

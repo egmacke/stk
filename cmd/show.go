@@ -35,6 +35,7 @@ func newShowCmd() *cobra.Command {
 			chosen, err := ui.Pick(ui.PickOptions{
 				Graph:            a.Graph,
 				Title:            "Search",
+				Verb:             "checkout",
 				IncludeUntracked: true,
 				ReadOnly:         noSelect,
 			})

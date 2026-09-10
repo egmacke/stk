@@ -34,6 +34,7 @@ func newCheckoutCmd() *cobra.Command {
 			chosen, err := ui.Pick(ui.PickOptions{
 				Graph:            a.Graph,
 				Title:            "Search",
+				Verb:             "checkout",
 				IncludeUntracked: true,
 			})
 			if err != nil {

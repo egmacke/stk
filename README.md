@@ -74,6 +74,7 @@ stk restack
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk submit [branch] [--pull] [--draft] [--stack]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
+| `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
@@ -189,10 +190,15 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | Flag | Short | Effect |
 | --- | --- | --- |
 | `--pull` | `-p` | open a pull request as well as pushing |
-| `--draft` | `-d` | open it as a draft; implies `--pull` |
-| `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit |
+| `--draft` | `-d` | open every new pull request as a draft |
+| `--draft-from <branch>` | | open that branch and everything above it as drafts |
+| `--draft-branch <branch>` | | open just that branch as a draft; repeatable |
+| `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
 | `--no-comment` | | leave the stack comment on each pull request alone |
+
+Every draft flag implies `--pull`, and they are mutually exclusive — there is
+never a question of which one wins.
 
 Without `-n` the title and body are asked for, prefilled from the branch's
 commits; press enter to accept an offer. Without a terminal, `--pull` needs
@@ -201,6 +207,58 @@ commits; press enter to accept an offer. Without a terminal, `--pull` needs
 A pull request cannot be based on a branch the remote does not have, so
 ancestors that have never been pushed are pushed first — they are not
 proposed, only published. `--stack` is what proposes the whole chain.
+
+### Ready and draft
+
+A stack is usually ready at the bottom and still being written at the top, so
+`stk` asks one question rather than one per branch. With no draft flag given
+and more than one pull request to open, it asks where the stack stops being
+ready:
+
+```console
+$ stk ss -p
+
+Ready for review up to (everything above it opens as a draft)
+
+  main
+  sc-123/api
+> sc-123/service        ← everything above this opens as a draft
+  sc-123/ui
+
+✓ Opened pull request #1 for sc-123/api onto main
+✓ Opened pull request #2 for sc-123/service onto sc-123/api
+✓ Opened draft pull request #3 for sc-123/ui onto sc-123/service
+```
+
+The branch you pick is ready, along with everything below it. Choosing trunk
+says nothing is ready yet; choosing the topmost branch says everything is.
+Dismissing the question opens no drafts. Over a pipe (`--interactive`) the name
+is typed instead of picked, and `-n` skips the question altogether.
+
+The same decision is available without asking:
+
+```bash
+stk ss -p -d                              # all of them drafts
+stk ss -p --draft-from sc-123/service     # service and up are drafts
+stk ss -p --draft-branch sc-123/ui        # just this one
+```
+
+Draft state is only ever decided for pull requests `stk` **opens**. To change
+one that is already open:
+
+```bash
+stk ready                  # this branch's pull request is ready for review
+stk ready --stack          # the whole stack
+stk ready --undo           # back to a draft
+```
+
+```console
+$ stk ready --stack
+✓ #1 is ready for review
+    https://github.com/acme/tool/pull/1
+⊘ #2 is already ready for review
+⊘ no pull request is open for sc-123/ui
+```
 
 ### The stack comment
 
@@ -301,6 +359,7 @@ untrack  -p --reparent     -r --recursive
 move     -o --onto
 restack  -u --up           -o --only
 submit   -p --pull         -d --draft       -n --no-prompt   -s --stack
+ready    -s --stack
 sync     -s --stack
 stack    -a --all          -l --legend      -j --json
 show     -j --json
@@ -317,9 +376,10 @@ stk create api -fmain  # --from main, value attached
 ```
 
 `--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
-`--autostash`, `--no-autostash`, `--no-comment` and `--rebase-merges` have
-none: a slipped letter should not disable a safety, delete a branch or move
-someone's uncommitted work.
+`--autostash`, `--no-autostash`, `--no-comment`, `--draft-from`,
+`--draft-branch`, `--undo` and `--rebase-merges` have none: a slipped letter
+should not disable a safety, delete a branch, move someone's uncommitted work
+or change what a reviewer is looking at.
 
 ## Missing arguments
 
@@ -474,7 +534,7 @@ main.go                 entry point
 cmd/                    cobra commands; no direct git orchestration
 internal/git/           the only code that runs git
 internal/stack/         metadata and the in-memory graph
-internal/operations/    create, track, rename, move, restack, submit, sync, continue, abort
+internal/operations/    create, track, rename, move, restack, submit, ready, sync, continue, abort
 internal/forge/         the only code that knows about GitHub, through gh
 internal/config/        repository-wide settings
 internal/ui/            branch picker, prompts, tree rendering

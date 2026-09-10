@@ -28,6 +28,10 @@ type Env struct {
 	// AskPullRequest collects the title and body of a pull request, offering
 	// stk's suggestions. It is nil when the command may not prompt.
 	AskPullRequest PullRequestText
+	// AskDraftCutLine asks which branch is the last one ready for review;
+	// everything above it opens as a draft. Returning nil means no drafts. It
+	// is nil when stk may not open a selector.
+	AskDraftCutLine func(candidates []*stack.Branch) (*stack.Branch, error)
 }
 
 // ErrConflict signals that a rebase stopped on a conflict and the operation

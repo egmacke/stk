@@ -14,8 +14,8 @@ import (
 type SubmitOptions struct {
 	// Pull opens a pull request for each branch stk was asked to submit.
 	Pull bool
-	// Draft opens those pull requests as drafts.
-	Draft bool
+	// Drafts says which of the pull requests this run opens are drafts.
+	Drafts DraftChoice
 	// NoPrompt takes the generated title and body instead of asking.
 	NoPrompt bool
 	// Stack submits the whole stack rather than one branch.
@@ -61,6 +61,15 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	}
 
 	prs := newPullRequestCache()
+	drafted := 0
+	drafts := map[string]bool{}
+	if opts.Pull {
+		// Settled before anything is pushed: a decision about the whole stack
+		// should not be taken halfway through publishing it.
+		if drafts, err = resolveDrafts(env, gh, g, plan, wanted, prs, opts); err != nil {
+			return err
+		}
+	}
 	pushed := 0
 	linked := 0
 	opened := 0
@@ -80,12 +89,15 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		if !opts.Pull || !wanted[b.ID] {
 			continue
 		}
-		created, err := ensurePullRequest(env, gh, g, b, opts, prs)
+		created, err := ensurePullRequest(env, gh, g, b, opts, prs, drafts[b.ID])
 		if err != nil {
 			return err
 		}
 		if created {
 			opened++
+			if drafts[b.ID] {
+				drafted++
+			}
 		}
 	}
 
@@ -99,6 +111,11 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	}
 
 	env.Out.Printf("")
+	if drafted > 0 && !env.DryRun {
+		env.Out.Printf("Mark a draft ready for review with stk ready, or the whole stack with")
+		env.Out.Printf("stk ready --stack.")
+		env.Out.Printf("")
+	}
 	env.Out.Printf("%s", submitSummary(env, submitCounts{
 		planned:   len(plan),
 		pushed:    pushed,
@@ -161,11 +178,15 @@ func openForge(env *Env, remote string) (*forge.GH, error) {
 	url := env.Repo.RemoteURL(remote)
 	repo, ok := forge.ParseRepo(url)
 	if !ok {
-		return nil, fmt.Errorf("cannot read %q as a repository URL, so stk cannot open a pull request\n\nPush without one:\n\n    stk submit", url)
+		return nil, fmt.Errorf(
+			"cannot read %q as a repository URL, so stk cannot reach a pull request\n\n"+
+				"Pull requests need a GitHub remote; pushing and restacking do not",
+			url)
 	}
 	if !repo.IsGitHub() {
 		return nil, fmt.Errorf(
-			"stk opens pull requests through the GitHub CLI, and %s is not a GitHub host\n\nPush without one:\n\n    stk submit",
+			"stk works with pull requests through the GitHub CLI, and %s is not a GitHub host\n\n"+
+				"Pull requests need a GitHub remote; pushing and restacking do not",
 			repo.Host)
 	}
 	gh := &forge.GH{Repo: repo, Dir: env.Repo.Root, Verbose: env.Repo.R.Verbose, Log: env.Repo.R.Log}
@@ -244,7 +265,7 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 // ensurePullRequest opens a pull request for a branch unless one is already
 // open, which stk never edits: someone may have rewritten the description in
 // the browser.
-func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions, prs *pullRequestCache) (bool, error) {
+func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions, prs *pullRequestCache, draft bool) (bool, error) {
 	if b.IsTrunk {
 		return false, nil
 	}
@@ -275,7 +296,11 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 	}
 
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would open a pull request for %s onto %s", b.Name, base)
+		kind := "a pull request"
+		if draft {
+			kind = "a draft pull request"
+		}
+		env.Out.Printf("(dry-run) would open %s for %s onto %s", kind, b.Name, base)
 		env.Out.Printf("    title: %s", title)
 		// Counted, because the summary of a dry run is written in the
 		// conditional too.
@@ -286,13 +311,13 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		Base:  base,
 		Title: title,
 		Body:  body,
-		Draft: opts.Draft,
+		Draft: draft,
 	})
 	if err != nil {
 		return false, err
 	}
 	kind := "Opened pull request"
-	if opts.Draft {
+	if draft {
 		kind = "Opened draft pull request"
 	}
 	if pr.Number > 0 {
@@ -305,6 +330,66 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 	}
 	prs.record(b.Name, pr)
 	return true, nil
+}
+
+// resolveDrafts works out which pull requests open as drafts.
+//
+// With no preference given, and more than one pull request to open, stk asks
+// for the cut line: a stack is usually ready at the bottom and still being
+// written at the top, so one question settles every branch.
+func resolveDrafts(env *Env, gh *forge.GH, g *stack.Graph, plan []*stack.Branch, wanted map[string]bool, prs *pullRequestCache, opts SubmitOptions) (map[string]bool, error) {
+	if err := opts.Drafts.Validate(); err != nil {
+		return nil, err
+	}
+	choice := opts.Drafts
+	if choice.Empty() && !opts.NoPrompt && env.AskDraftCutLine != nil && !env.DryRun {
+		// Only the branches that will actually get a new pull request are
+		// worth asking about, and only if there is a choice to make.
+		var missing []*stack.Branch
+		for _, b := range plan {
+			if !wanted[b.ID] {
+				continue
+			}
+			pr, err := prs.open(gh, b.Name)
+			if err != nil {
+				return nil, err
+			}
+			if pr == nil {
+				missing = append(missing, b)
+			}
+		}
+		if len(missing) > 1 {
+			cut, err := env.AskDraftCutLine(draftCandidates(g, missing))
+			if err != nil {
+				return nil, err
+			}
+			if cut != nil {
+				choice = DraftChoice{From: aboveCut(missing, cut)}
+				if choice.From == "" {
+					// The top branch is ready, so nothing is a draft.
+					return map[string]bool{}, nil
+				}
+			}
+		}
+	}
+	return draftSet(g, plan, choice)
+}
+
+// aboveCut names the first branch above the chosen one, which is where drafts
+// begin. It is empty when the choice was the topmost branch.
+func aboveCut(ordered []*stack.Branch, cut *stack.Branch) string {
+	if cut.IsTrunk {
+		return ordered[0].Name
+	}
+	for i, b := range ordered {
+		if b.ID == cut.ID {
+			if i+1 < len(ordered) {
+				return ordered[i+1].Name
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // pullRequestText settles on the title and body: generated outright with

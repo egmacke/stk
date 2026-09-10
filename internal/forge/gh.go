@@ -125,6 +125,16 @@ func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {
 	return &prs[0], nil
 }
 
+// ReadyForReview takes a pull request out of draft, or with undo puts it back.
+func (g *GH) ReadyForReview(number int, undo bool) error {
+	args := []string{fmt.Sprintf("%d", number)}
+	if undo {
+		args = append(args, "--undo")
+	}
+	_, err := g.run("pr", "ready", args...)
+	return err
+}
+
 // Comment is one comment on a pull request, reduced to what stk needs to find
 // its own again and rewrite it.
 type Comment struct {

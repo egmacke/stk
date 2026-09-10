@@ -127,6 +127,8 @@ func main() {
 		listPRs(args[2:])
 	case "pr create":
 		createPR(args[2:])
+	case "pr ready":
+		readyPR(args[2:])
 	default:
 		if args[0] == "api" {
 			api(args[1:])
@@ -182,6 +184,33 @@ func createPR(args []string) {
 	s.PRs = append(s.PRs, pr)
 	s.save()
 	fmt.Println(pr.URL)
+}
+
+func readyPR(args []string) {
+	values, switches := flags(args)
+	number := ""
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") && values["repo"] != a {
+			number = a
+			break
+		}
+	}
+	if number == "" {
+		fail("no pull request number in: %s", strings.Join(args, " "))
+	}
+	n, err := strconv.Atoi(number)
+	if err != nil {
+		fail("bad pull request number %q", number)
+	}
+	s := load()
+	for i := range s.PRs {
+		if s.PRs[i].Number == n {
+			s.PRs[i].IsDraft = switches["undo"]
+			s.save()
+			return
+		}
+	}
+	fail("no pull request %d", n)
 }
 
 // api answers the comment endpoints stk uses:

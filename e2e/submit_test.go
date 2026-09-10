@@ -136,6 +136,74 @@ func TestSubmitDraftImpliesPull(t *testing.T) {
 	requireContains(t, r.ghCallLog(), "--base main --title api --body - api --draft")
 }
 
+func TestSubmitDraftFromCutsTheStack(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stk("ss", "-pn", "--draft-from", "service")
+	requireContains(t, out, "Opened pull request #1 for api")
+	requireContains(t, out, "Opened draft pull request #2 for service")
+	requireContains(t, out, "Opened draft pull request #3 for ui")
+	requireContains(t, out, "stk ready --stack")
+
+	state := r.ghStubState()
+	drafts := map[string]bool{}
+	for _, pr := range state.PRs {
+		drafts[pr.Head] = pr.Draft
+	}
+	requireEqual(t, drafts["api"], false, "api is ready")
+	requireEqual(t, drafts["service"], true, "service is a draft")
+	requireEqual(t, drafts["ui"], true, "ui is a draft")
+}
+
+func TestSubmitDraftBranchNamesIndividualDrafts(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stk("ss", "-n", "--draft-branch", "api", "--draft-branch", "ui")
+	requireContains(t, out, "Opened draft pull request #1 for api")
+	requireContains(t, out, "Opened pull request #2 for service")
+	requireContains(t, out, "Opened draft pull request #3 for ui")
+
+	drafts := map[string]bool{}
+	for _, pr := range r.ghStubState().PRs {
+		drafts[pr.Head] = pr.Draft
+	}
+	requireEqual(t, drafts["api"], true, "api is a draft")
+	requireEqual(t, drafts["service"], false, "service is ready")
+	requireEqual(t, drafts["ui"], true, "ui is a draft")
+}
+
+func TestSubmitRejectsConflictingDraftFlags(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stkFail("ss", "-dn", "--draft-from", "service")
+	requireContains(t, out, "not several")
+	out = r.stkFail("ss", "-n", "--draft-from", "service", "--draft-branch", "api")
+	requireContains(t, out, "not several")
+	// A draft flag alone still means --pull.
+	out = r.stk("ss", "-n", "--draft-from", "api")
+	requireContains(t, out, "Opened draft pull request #1")
+}
+
+func TestSubmitDraftFlagsNameARealBranch(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stkFail("ss", "-n", "--draft-from", "nope")
+	requireContains(t, out, `branch "nope" does not exist`)
+	requireNotContains(t, r.ghCallLog(), "pr create")
+}
+
 func TestSubmitLeavesAnOpenPullRequestAlone(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
@@ -292,6 +360,84 @@ func TestSubmitNeverTouchesSomeoneElsesComment(t *testing.T) {
 	requireEqual(t, comments[1], "Looks good, one nit about naming.", "review comment unchanged")
 }
 
+func TestSubmitAsksWhereTheStackStopsBeingReady(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+
+	// The cut line, then a title and body for each of the three branches.
+	// api is the last branch ready, so the two above it open as drafts.
+	stdin := "api\n" + strings.Repeat("\n\n", 3)
+	res := r.stkAt(r.Root, stdin, "--interactive", "ss", "-p")
+	requireEqual(t, res.Code, 0, "submit succeeded")
+	requireContains(t, res.All(), "Ready for review up to")
+	requireContains(t, res.All(), "Opened pull request #1 for api")
+	requireContains(t, res.All(), "Opened draft pull request #2 for service")
+	requireContains(t, res.All(), "Opened draft pull request #3 for ui")
+
+	drafts := map[string]bool{}
+	for _, pr := range r.ghStubState().PRs {
+		drafts[pr.Head] = pr.Draft
+	}
+	requireEqual(t, drafts["api"], false, "api is ready")
+	requireEqual(t, drafts["service"], true, "service is a draft")
+	requireEqual(t, drafts["ui"], true, "ui is a draft")
+}
+
+func TestSubmitCutLineAtTheTopMeansNoDrafts(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	stdin := "service\n" + strings.Repeat("\n\n", 2)
+	res := r.stkAt(r.Root, stdin, "--interactive", "ss", "-p")
+	requireEqual(t, res.Code, 0, "submit succeeded")
+	for _, pr := range r.ghStubState().PRs {
+		requireEqual(t, pr.Draft, false, "nothing is a draft: "+pr.Head)
+	}
+}
+
+func TestSubmitCutLineAtTrunkMeansEverythingIsADraft(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	stdin := "main\n" + strings.Repeat("\n\n", 2)
+	res := r.stkAt(r.Root, stdin, "--interactive", "ss", "-p")
+	requireEqual(t, res.Code, 0, "submit succeeded")
+	for _, pr := range r.ghStubState().PRs {
+		requireEqual(t, pr.Draft, true, "everything is a draft: "+pr.Head)
+	}
+}
+
+func TestSubmitDoesNotAskAboutDraftsForASinglePullRequest(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+
+	res := r.stkAt(r.Root, "\n\n", "--interactive", "submit", "-p")
+	requireEqual(t, res.Code, 0, "submit succeeded")
+	requireNotContains(t, res.All(), "Ready for review up to")
+}
+
+func TestSubmitNoPromptSkipsTheDraftQuestion(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	res := r.stkAt(r.Root, "", "--interactive", "ss", "-pn")
+	requireEqual(t, res.Code, 0, "submit succeeded")
+	requireNotContains(t, res.All(), "Ready for review up to")
+	for _, pr := range r.ghStubState().PRs {
+		requireEqual(t, pr.Draft, false, "nothing is a draft: "+pr.Head)
+	}
+}
+
 func TestSubmitPromptsForTitleAndBody(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
@@ -382,6 +528,56 @@ func TestSubmitRefusesTrunk(t *testing.T) {
 	requireNotContains(t, remoteHeads(r), "refs/heads/api")
 }
 
+func TestReadyMarksPullRequestsReadyAndBack(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-dn")
+
+	out := r.stk("ready")
+	requireContains(t, out, "#2 is ready for review")
+	requireContains(t, out, "1 pull request(s) marked ready for review")
+
+	// Already ready: nothing to do, and gh is not asked to do it again.
+	out = r.stk("ready")
+	requireContains(t, out, "#2 is already ready for review")
+	requireContains(t, out, "Nothing to change.")
+
+	out = r.stk("ready", "--stack")
+	requireContains(t, out, "#1 is ready for review")
+	requireContains(t, out, "#2 is already ready for review")
+
+	out = r.stk("ready", "--stack", "--undo")
+	requireContains(t, out, "#1 is a draft")
+	requireContains(t, out, "#2 is a draft")
+	for _, pr := range r.ghStubState().PRs {
+		requireEqual(t, pr.Draft, true, "back to a draft: "+pr.Head)
+	}
+}
+
+func TestReadyReportsBranchesWithNoPullRequest(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	out := r.stk("ready", "--stack")
+	requireContains(t, out, "no pull request is open for api")
+	requireContains(t, out, "no pull request is open for service")
+	requireContains(t, out, "Nothing to change.")
+	requireNotContains(t, r.ghCallLog(), "pr ready")
+}
+
+func TestReadyRefusesTrunk(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stk("checkout", "main")
+
+	out := r.stkFail("ready")
+	requireContains(t, out, "is the trunk branch")
+}
+
 func TestSubmitNeedsARemote(t *testing.T) {
 	r := newRepo(t)
 	buildStack(r, "api")
@@ -399,6 +595,7 @@ func TestSubmitRejectsANonGitHubRemote(t *testing.T) {
 
 	out := r.stkFail("submit", "-p", "-n")
 	requireContains(t, out, "not a GitHub host")
+	requireContains(t, out, "pushing and restacking do not")
 	// Pushing is unaffected by where pull requests can be opened.
 	out = r.stk("submit")
 	requireContains(t, out, "Pushed api to origin")

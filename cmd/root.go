@@ -109,6 +109,7 @@ func NewRoot() *cobra.Command {
 		newUntrackCmd(),
 		newRenameCmd(),
 		newMoveCmd(),
+		newReadyCmd(),
 		newRestackCmd(),
 		newSubmitCmd(),
 		newSyncCmd(),

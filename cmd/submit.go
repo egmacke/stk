@@ -14,6 +14,8 @@ import (
 
 func newSubmitCmd() *cobra.Command {
 	var pull, draft, noPrompt, wholeStack, noComment bool
+	var draftFrom string
+	var draftBranches []string
 	cmd := &cobra.Command{
 		Use:     "submit [branch]",
 		Aliases: []string{"s", "ss"},
@@ -32,6 +34,10 @@ func newSubmitCmd() *cobra.Command {
 			"stk s is this command; stk ss is stk submit --stack, which refreshes every\n" +
 			"branch of the stack at once. Every other flag still applies, so stk ss -pn\n" +
 			"proposes the whole stack without asking anything.\n\n" +
+			"Draft state is decided per branch. With none of the draft flags given, and\n" +
+			"more than one pull request to open, stk asks where the stack stops being\n" +
+			"ready: the branch you pick and everything below it open for review, and\n" +
+			"everything above it opens as a draft.\n\n" +
 			"stk submit never merges and never deletes anything.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: branchNameCompletion,
@@ -41,15 +47,14 @@ func newSubmitCmd() *cobra.Command {
 				// line still applies.
 				wholeStack = true
 			}
-			if draft {
-				// A draft is a kind of pull request, so asking for one is
-				// asking for the other.
-				pull = true
+			drafts := operations.DraftChoice{All: draft, From: draftFrom, Branches: draftBranches}
+			if err := drafts.Validate(); err != nil {
+				return err
 			}
-			if noPrompt && !pull {
-				// --no-prompt only shapes a pull request; on its own it says
-				// nothing about pushing.
-				noPrompt = false
+			if !drafts.Empty() {
+				// Every draft flag is about a pull request, so asking for one
+				// is asking for the other.
+				pull = true
 			}
 			a, err := open()
 			if err != nil {
@@ -71,10 +76,11 @@ func newSubmitCmd() *cobra.Command {
 						"Generate them instead:\n\n    stk submit --pull --no-prompt")
 				}
 				a.Env.AskPullRequest = askPullRequest
+				a.Env.AskDraftCutLine = askDraftCutLine(a)
 			}
 			return operations.Submit(a.Env, a.Graph, target, operations.SubmitOptions{
 				Pull:      pull,
-				Draft:     draft,
+				Drafts:    drafts,
 				NoPrompt:  noPrompt,
 				Stack:     wholeStack,
 				NoComment: noComment,
@@ -82,10 +88,14 @@ func newSubmitCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&pull, "pull", "p", false, "open a pull request for the branch")
-	cmd.Flags().BoolVarP(&draft, "draft", "d", false, "open the pull request as a draft (implies --pull)")
-	cmd.Flags().BoolVarP(&noPrompt, "no-prompt", "n", false, "do not ask for a title or body; use the generated ones")
+	cmd.Flags().BoolVarP(&draft, "draft", "d", false, "open every new pull request as a draft (implies --pull)")
+	cmd.Flags().StringVar(&draftFrom, "draft-from", "", "open `branch` and everything above it as drafts (implies --pull)")
+	cmd.Flags().StringArrayVar(&draftBranches, "draft-branch", nil, "open this `branch` as a draft; repeatable (implies --pull)")
+	cmd.Flags().BoolVarP(&noPrompt, "no-prompt", "n", false, "do not ask for a title, body or draft state; use the generated ones")
 	cmd.Flags().BoolVarP(&wholeStack, "stack", "s", false, "submit every branch in the stack, each onto its parent")
 	cmd.Flags().BoolVar(&noComment, "no-comment", false, "do not write or update the stack comment on the pull requests")
+	_ = cmd.RegisterFlagCompletionFunc("draft-from", branchNameCompletion)
+	_ = cmd.RegisterFlagCompletionFunc("draft-branch", branchNameCompletion)
 	return cmd
 }
 
@@ -107,4 +117,33 @@ func askPullRequest(b *stack.Branch, defaultTitle, defaultBody string) (string, 
 		return "", "", err
 	}
 	return title, body, nil
+}
+
+// askDraftCutLine asks where the stack stops being ready for review.
+//
+// The candidates run bottom to top with trunk at the head, so choosing trunk
+// says nothing is ready yet and choosing the topmost branch says everything
+// is. Dismissing the question opens no drafts, which is what stk did before
+// there was a question to ask.
+func askDraftCutLine(a *app) func([]*stack.Branch) (*stack.Branch, error) {
+	return func(candidates []*stack.Branch) (*stack.Branch, error) {
+		name, err := promptBranch(a.Graph, branchPrompt{
+			Title:      "Ready for review up to (everything above it opens as a draft)",
+			Candidates: candidates,
+			Missing:    "no draft choice given",
+			Empty:      "no branch to choose from",
+		})
+		if cancelled(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, b := range candidates {
+			if b.Name == name {
+				return b, nil
+			}
+		}
+		return nil, fmt.Errorf("%q is not one of the branches being submitted", name)
+	}
 }

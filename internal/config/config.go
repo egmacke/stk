@@ -18,6 +18,8 @@ const (
 	KeyVersion = "stk.version"
 	KeyTrunk   = "stk.trunk"
 	KeyRemote  = "stk.remote"
+	// KeyAutostash turns --autostash on for every command that accepts it.
+	KeyAutostash = "stk.autostash"
 )
 
 // Config is the repository-wide stk configuration.
@@ -25,6 +27,9 @@ type Config struct {
 	Version int
 	Trunk   string
 	Remote  string
+	// Autostash makes commands that need a clean working tree park
+	// uncommitted changes instead of refusing to run.
+	Autostash bool
 }
 
 // Load reads the configuration. ok is false when the repository has never been
@@ -47,13 +52,21 @@ func Load(repo *git.Repo) (cfg Config, ok bool, err error) {
 		Trunk:   repo.ConfigGet(KeyTrunk),
 		Remote:  repo.ConfigGet(KeyRemote),
 	}
+	autostash, convErr := repo.ConfigBool(KeyAutostash, false)
+	if convErr != nil {
+		return cfg, true, convErr
+	}
+	cfg.Autostash = autostash
 	if cfg.Trunk == "" {
 		return cfg, true, fmt.Errorf("%s is not set; run stk init", KeyTrunk)
 	}
 	return cfg, true, nil
 }
 
-// Save writes the configuration to the repository config.
+// Save writes the detected settings to the repository config.
+//
+// KeyAutostash is deliberately left alone: it is a standing preference the
+// user sets by hand, and re-running stk init must not clear it.
 func Save(repo *git.Repo, cfg Config) error {
 	if err := repo.ConfigSet(KeyVersion, strconv.Itoa(cfg.Version)); err != nil {
 		return err

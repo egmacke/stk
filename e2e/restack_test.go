@@ -185,7 +185,7 @@ func TestRestackRefusesDirtyWorktree(t *testing.T) {
 	r.write("a.txt", "dirty\n")
 	out := r.stkFail("restack")
 	requireContains(t, out, "uncommitted changes")
-	requireContains(t, out, "does not stash automatically")
+	requireContains(t, out, "--autostash")
 }
 
 func TestRestackDryRunChangesNothing(t *testing.T) {

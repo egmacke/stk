@@ -9,6 +9,7 @@ import (
 func newCreateCmd() *cobra.Command {
 	var from string
 	var noCheckout bool
+	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:     "create [branch]",
 		Aliases: []string{"c"},
@@ -22,6 +23,9 @@ func newCreateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			name := ""
@@ -47,6 +51,7 @@ func newCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&from, "from", "f", "", "parent `branch` (defaults to the current branch)")
 	cmd.Flags().BoolVar(&noCheckout, "no-checkout", false, "create the branch without switching to it")
+	stash.register(cmd)
 	_ = cmd.RegisterFlagCompletionFunc("from", branchNameCompletion)
 	return cmd
 }

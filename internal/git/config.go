@@ -1,6 +1,9 @@
 package git
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // ConfigGet reads a repository config value. Missing keys return "".
 func (repo *Repo) ConfigGet(key string) string {
@@ -9,6 +12,21 @@ func (repo *Repo) ConfigGet(key string) string {
 		return ""
 	}
 	return res.Out()
+}
+
+// ConfigBool reads a repository config value as a git boolean, returning def
+// when the key is unset. Every spelling git accepts (true, yes, on, 1 and
+// their negatives) is honoured, because the key is one users set by hand.
+func (repo *Repo) ConfigBool(key string, def bool) (bool, error) {
+	res := repo.R.Run("config", "--local", "--bool", "--get", key)
+	if res.OK() {
+		return res.Out() == "true", nil
+	}
+	// Exit code 1 means the key is simply absent.
+	if res.ExitCode == 1 {
+		return def, nil
+	}
+	return def, fmt.Errorf("%s is not a boolean: %q", key, repo.ConfigGet(key))
 }
 
 // ConfigSet writes a repository config value.

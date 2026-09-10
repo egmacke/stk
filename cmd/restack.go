@@ -11,6 +11,7 @@ import (
 
 func newRestackCmd() *cobra.Command {
 	var up, only, rebaseMerges bool
+	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:     "restack",
 		Aliases: []string{"r"},
@@ -28,6 +29,9 @@ func newRestackCmd() *cobra.Command {
 			}
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			// A paused operation must be reported before anything else: it
@@ -86,6 +90,7 @@ func newRestackCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&up, "up", "u", false, "restack the current branch and its descendants only")
 	cmd.Flags().BoolVarP(&only, "only", "o", false, "restack the current branch only")
 	cmd.Flags().BoolVar(&rebaseMerges, "rebase-merges", false, "preserve merge commits instead of refusing to flatten them")
+	stash.register(cmd)
 	return cmd
 }
 

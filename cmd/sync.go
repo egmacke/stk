@@ -10,6 +10,7 @@ import (
 
 func newSyncCmd() *cobra.Command {
 	var stackOnly, noRestack, noCleanup, cleanup bool
+	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Fetch, update trunk, prune merged branches and restack",
@@ -23,6 +24,9 @@ func newSyncCmd() *cobra.Command {
 			}
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			mode := operations.CleanupAsk
@@ -49,5 +53,6 @@ func newSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "fetch, update trunk and clean up without rewriting branches")
 	cmd.Flags().BoolVar(&noCleanup, "no-cleanup", false, "never delete merged branches")
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "delete merged branches without prompting")
+	stash.register(cmd)
 	return cmd
 }

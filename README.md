@@ -71,7 +71,7 @@ stk restack
 | `stk untrack [branch]` | Drop metadata; the git branch is never deleted |
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
-| `stk restack [--up\|--only]` | Rebase branches onto their parents |
+| `stk restack [--up\|--only] [--autostash]` | Rebase branches onto their parents |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
@@ -185,9 +185,10 @@ info     -j --json
 doctor   -j --json
 ```
 
-`--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup` and
-`--rebase-merges` have none: a slipped letter should not disable a safety or
-delete a branch.
+`--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
+`--autostash`, `--no-autostash` and `--rebase-merges` have none: a slipped
+letter should not disable a safety, delete a branch or move someone's
+uncommitted work.
 
 ## Missing arguments
 
@@ -219,16 +220,63 @@ Run:
 With `--interactive` but no terminal — a pipe, or an agent — the value is read
 from stdin as a line of text instead of opening the picker.
 
+## Uncommitted changes
+
+By default `stk` follows git. Navigation carries your changes across if git
+can, and refuses if it cannot; the commands that rewrite history stop before
+they start:
+
+```console
+$ stk restack
+stk: working tree has uncommitted changes
+
+Commit or stash them first, or re-run with --autostash to have stk
+park them for the operation and put them back afterwards
+```
+
+`--autostash` parks the changes, runs the command, and puts them back:
+
+```bash
+stk restack --autostash
+stk checkout other --autostash
+```
+
+It is accepted by `create`, `checkout`, `show`, `up`, `down`, `top`, `bottom`,
+`move`, `restack` and `sync`. To make it the default for all of them:
+
+```bash
+git config stk.autostash true      # --no-autostash still overrides it
+```
+
+Only tracked changes are parked, exactly as with `git rebase --autostash`:
+untracked files are left where they are, so nothing disappears from a directory
+listing.
+
+What happens if the changes will not go back cleanly depends on whether the
+command can be undone:
+
+| Command | On a conflicting restore |
+| --- | --- |
+| the ones that only switch: `create`, `checkout`, `show`, `up`, `down`, `top`, `bottom` | nothing is switched, so you keep your branch and your changes and the command fails — `create` leaves the new branch behind, unchecked out |
+| the ones that rewrite history: `move`, `restack`, `sync` | the rebases stand; the conflict is left in the working tree for you to resolve and the stash is kept as well, so nothing depends on that resolution |
+
+Changes parked for a restack belong to the operation, so a conflict does not
+strand them: `stk continue` restores them when the restack finishes, and
+`stk abort` restores them along with every branch. While an operation is
+paused they live in `refs/stk/autostash/<id>` rather than only in the stash
+reflog, and `stk doctor` reports any that a killed `stk` left behind.
+
 ## How the metadata is stored
 
 Everything lives inside the repository and is shared by every worktree:
 
 | State | Where |
 | --- | --- |
-| trunk, default remote, metadata version | `stk.*` in the repository git config |
+| trunk, default remote, autostash preference, metadata version | `stk.*` in the repository git config |
 | branch identity and logical parent | `branch.<name>.stk-id` / `.stk-parent` |
 | protected base commits | `refs/stk/base/<branch-id>` |
 | operation snapshots | `refs/stk/snapshot/<op-id>/<branch-id>` |
+| changes parked by `--autostash` | `refs/stk/autostash/<id>` |
 | in-flight operation journal | `<git-common-dir>/stk/operations/current.json` |
 
 Because the repository config and refs live in the git *common* directory,
@@ -249,7 +297,7 @@ commits belong to the branch.
 - never chooses a stack parent for you;
 - never deletes a branch git cannot prove is contained in trunk;
 - never deletes or rewrites a branch checked out in another worktree;
-- never stashes your changes;
+- never stashes your changes unless you ask with `--autostash`;
 - never rewrites a branch whose recorded base cannot be validated;
 - never flattens merge commits without `--rebase-merges`;
 - never hides a git conflict;

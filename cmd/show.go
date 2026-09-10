@@ -12,6 +12,7 @@ import (
 
 func newShowCmd() *cobra.Command {
 	var asJSON, noSelect bool
+	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Browse the whole stack graph interactively",
@@ -22,6 +23,9 @@ func newShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			if asJSON {
@@ -53,6 +57,7 @@ func newShowCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&asJSON, "json", "j", false, "print the stack graph as JSON")
 	cmd.Flags().BoolVar(&noSelect, "no-select", false, "browse without offering to check out")
+	stash.register(cmd)
 	return cmd
 }
 

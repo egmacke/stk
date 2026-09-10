@@ -18,6 +18,10 @@ type Env struct {
 	Out         *output.Printer
 	Interactive bool
 	DryRun      bool
+	// Autostash allows commands that need a clean working tree to park
+	// uncommitted changes and restore them afterwards, instead of refusing to
+	// run. It is never on unless the user asked, by flag or by config.
+	Autostash bool
 	// Confirm asks the user a yes/no question. It is nil when the command is
 	// running non-interactively.
 	Confirm func(question string, defaultYes bool) (bool, error)
@@ -53,7 +57,10 @@ func RequireNoOperation(repo *git.Repo) error {
 func requireNoOperation(env *Env) error { return RequireNoOperation(env.Repo) }
 
 // requireCleanTree refuses history rewriting while the worktree has changes.
-// stk never stashes on the user's behalf.
+//
+// stk never stashes unasked, so by the time a command reaches here it has
+// already called Stash: with --autostash the tree is clean again, and without
+// it the changes are the user's to deal with.
 func requireCleanTree(env *Env) error {
 	clean, err := env.Repo.IsClean()
 	if err != nil {
@@ -62,7 +69,25 @@ func requireCleanTree(env *Env) error {
 	if clean {
 		return nil
 	}
-	return errors.New("working tree has uncommitted changes\n\nCommit or stash them first; stk does not stash automatically")
+	if env.Autostash && env.DryRun {
+		noteDryRunStash(env)
+		return nil
+	}
+	return errors.New("working tree has uncommitted changes\n\n" +
+		"Commit or stash them first, or re-run with --autostash to have stk\n" +
+		"park them for the operation and put them back afterwards")
+}
+
+// noteDryRunStash says what a real run would have parked. A dry run parks
+// nothing, and must never refuse to describe a plan.
+func noteDryRunStash(env *Env) {
+	if !env.Autostash {
+		return
+	}
+	if clean, err := env.Repo.IsClean(); err != nil || clean {
+		return
+	}
+	env.Out.Printf("(dry-run) would stash the uncommitted changes and restore them afterwards")
 }
 
 // resolveHead reads a branch's current tip straight from git.

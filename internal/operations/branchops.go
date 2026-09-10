@@ -119,10 +119,9 @@ func Create(env *Env, g *stack.Graph, opts CreateOptions) error {
 	env.Out.OK("Created %s from %s", opts.Name, parent.Name)
 	env.Out.OK("Parent: %s", parent.Name)
 	if opts.Checkout {
-		if err := repo.Switch(opts.Name); err != nil {
+		if err := Switch(env, opts.Name); err != nil {
 			return err
 		}
-		env.Out.OK("Switched to %s", opts.Name)
 	}
 	return nil
 }
@@ -343,6 +342,18 @@ func Move(env *Env, g *stack.Graph, name, ontoName string) error {
 	if err := requireNoOperation(env); err != nil {
 		return err
 	}
+	// Move rewrites metadata before it rebases, so it parks the working tree
+	// itself and hands the stash to the restack that follows.
+	stash, err := Stash(env, "move")
+	if err != nil {
+		return err
+	}
+	handedOver := false
+	defer func() {
+		if !handedOver {
+			stash.Restore(env)
+		}
+	}()
 	if err := requireCleanTree(env); err != nil {
 		return err
 	}
@@ -360,10 +371,12 @@ func Move(env *Env, g *stack.Graph, name, ontoName string) error {
 	if target == nil {
 		return fmt.Errorf("branch %q disappeared during move", name)
 	}
+	handedOver = true
 	_, err = Restack(env, fresh, target, RestackOptions{
 		Scope:       ScopeUp,
 		Heading:     fmt.Sprintf("Restacking from %s...", target.Name),
 		DoneMessage: "Upstack is up to date.",
+		Stash:       stash,
 	})
 	return err
 }

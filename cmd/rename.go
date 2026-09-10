@@ -55,6 +55,7 @@ func newRenameCmd() *cobra.Command {
 
 func newMoveCmd() *cobra.Command {
 	var onto string
+	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:   "move [branch] [--onto <new-parent>]",
 		Short: "Re-parent a branch and restack everything above it",
@@ -65,6 +66,9 @@ func newMoveCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
+				return err
+			}
+			if err := stash.apply(a); err != nil {
 				return err
 			}
 			b, err := a.resolveBranchArg(args)
@@ -90,6 +94,7 @@ func newMoveCmd() *cobra.Command {
 		ValidArgsFunction: branchNameCompletion,
 	}
 	cmd.Flags().StringVarP(&onto, "onto", "o", "", "new parent `branch`")
+	stash.register(cmd)
 	_ = cmd.RegisterFlagCompletionFunc("onto", branchNameCompletion)
 	return cmd
 }

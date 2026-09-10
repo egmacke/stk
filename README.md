@@ -11,9 +11,10 @@ truth.
 Everything else — branches, commits, refs, rebases, worktrees, the index — stays
 plain git. You can stop using `stk` at any moment and carry on with git alone.
 
-There is no hosted service, no account, no GitHub or GitLab integration, no
-pull-request management and no background daemon. The only runtime dependency
-is `git`.
+There is no hosted service, no account, no stored token, no PR or CI status
+tracking and no background daemon. `git` is the only dependency; `stk submit
+--pull` shells out to the [GitHub CLI](https://cli.github.com) to open a pull
+request when you ask it to, and everything else works with no forge at all.
 
 ## Install
 
@@ -72,6 +73,7 @@ stk restack
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
+| `stk submit [branch] [--pull] [--draft] [--stack]` | Push to the remote, optionally opening pull requests |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
@@ -137,7 +139,73 @@ With sibling branches, `stk restack` from `C` still processes `A`, `B`, `D`,
 `C` and `E` — the entire connected tree rooted at the lowest branch above
 trunk.
 
-### Status markers
+### Publishing a stack
+
+`stk submit` pushes the current branch to the configured remote, creating it
+there if needed:
+
+```console
+$ stk submit
+✓ Pushed sc-123/api to origin (created)
+
+1 branch(es) pushed.
+```
+
+A branch a restack has rewritten no longer fast-forwards, so `stk` pushes it
+with `--force-with-lease`: the remote branch is replaced only while it still
+holds the commit `stk` last published. If someone else has pushed in the
+meantime the push is declined and nothing is overwritten.
+
+```console
+$ stk submit --stack
+✓ Pushed sc-123/api to origin (forced)
+✓ Pushed sc-123/service to origin (forced)
+```
+
+### Pull requests
+
+`--pull` (`-p`) also opens a pull request through the
+[GitHub CLI](https://cli.github.com), based on the branch's **stack parent**
+rather than trunk, so each review shows only that branch's commits:
+
+```bash
+stk submit --pull                  # asks for a title and body
+stk submit --pull --no-prompt      # generates both
+stk submit --draft                 # a draft PR; -d implies --pull
+stk submit --stack --pull          # one PR per branch, each onto its parent
+```
+
+| Flag | Short | Effect |
+| --- | --- | --- |
+| `--pull` | `-p` | open a pull request as well as pushing |
+| `--draft` | `-d` | open it as a draft; implies `--pull` |
+| `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit |
+| `--stack` | `-s` | submit every branch in the stack, each onto its parent |
+
+Without `-n` the title and body are asked for, prefilled from the branch's
+commits; press enter to accept an offer. Without a terminal, `--pull` needs
+`-n`, so scripts and agents never hang on a prompt.
+
+A pull request cannot be based on a branch the remote does not have, so
+ancestors that have never been pushed are pushed first — they are not
+proposed, only published. `--stack` is what proposes the whole chain.
+
+An **open pull request is never edited**: `stk` pushes the branch, prints the
+existing PR and leaves its title, body and draft state alone, because someone
+may have rewritten them in the browser.
+
+```console
+$ stk submit -p
+✓ Pushed sc-123/api to origin (updated)
+✓ Pull request #42 is already open for sc-123/api
+    https://github.com/acme/tool/pull/42
+```
+
+`gh` is needed only for `--pull`; pushing works without it. Nothing about a
+pull request is stored in the repository — `stk` keeps no PR numbers, no
+status and no token.
+
+## Status markers
 
 ```text
 ↑N   commits not pushed          ↓N   commits behind upstream
@@ -178,11 +246,20 @@ track    -p --parent
 untrack  -p --reparent     -r --recursive
 move     -o --onto
 restack  -u --up           -o --only
+submit   -p --pull         -d --draft       -n --no-prompt   -s --stack
 sync     -s --stack
 stack    -a --all          -l --legend      -j --json
 show     -j --json
 info     -j --json
 doctor   -j --json
+```
+
+Shorthands bundle, as git's do, so a run of switches is one token:
+
+```bash
+stk submit -spn        # --stack --pull --no-prompt
+stk stack -alj         # --all --legend --json
+stk create api -fmain  # --from main, value attached
 ```
 
 `--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
@@ -316,7 +393,9 @@ commits belong to the branch.
 - never flattens merge commits without `--rebase-merges`;
 - never hides a git conflict;
 - never initialises a repository silently;
-- never pushes, force-pushes or merges.
+- never pushes unless you run `stk submit`, and never force-pushes without a
+  lease on what it is replacing;
+- never merges, and never edits a pull request it did not open in that run.
 
 When a restack hits a conflict it stops, tells you exactly what to do, and
 keeps a journal so `stk continue` resumes the *original* scope and `stk abort`
@@ -341,7 +420,8 @@ main.go                 entry point
 cmd/                    cobra commands; no direct git orchestration
 internal/git/           the only code that runs git
 internal/stack/         metadata and the in-memory graph
-internal/operations/    create, track, rename, move, restack, sync, continue, abort
+internal/operations/    create, track, rename, move, restack, submit, sync, continue, abort
+internal/forge/         the only code that knows about GitHub, through gh
 internal/config/        repository-wide settings
 internal/ui/            branch picker, prompts, tree rendering
 internal/output/        text and JSON output

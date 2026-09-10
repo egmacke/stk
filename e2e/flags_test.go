@@ -50,6 +50,32 @@ func TestRestackRefusesUntrackedBranch(t *testing.T) {
 	requireContains(t, out, `branch "loose" is not tracked by stk`)
 }
 
+func TestShorthandFlagsBundle(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	// -a -l -j as one token: every stack, with a legend, as JSON.
+	out := r.stk("stack", "-alj")
+	requireContains(t, out, `"trunk": "main"`)
+	requireContains(t, out, `"name": "service"`)
+
+	// -s -p -n as one token: the whole stack, with generated pull requests.
+	out = r.stk("submit", "-spn", "--dry-run")
+	requireContains(t, out, "(dry-run) would push api to origin")
+	requireContains(t, out, "(dry-run) would push service to origin")
+	requireContains(t, out, "would open a pull request for api onto main")
+	requireContains(t, out, "would open a pull request for service onto api")
+
+	// A bundle still reaches the flags' own validation.
+	requireContains(t, r.stkFail("restack", "-uo"), "use either --up or --only, not both")
+
+	// A shorthand that takes a value may carry it in the same token.
+	out = r.stk("create", "bundled", "-fmain", "--dry-run")
+	requireContains(t, out, "Would create bundled from main")
+}
+
 func TestQuietSuppressesProgressButNotData(t *testing.T) {
 	r := newRepo(t)
 	buildStack(r, "api")

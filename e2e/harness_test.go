@@ -40,12 +40,18 @@ type repo struct {
 	Root   string
 	Origin string
 	home   string
+	// bin is prepended to PATH, so a test can put a stub gh in front of any
+	// real one and assert on how stk called it.
+	bin string
 }
 
 // env returns a hermetic environment: no user or system git config, a fixed
 // identity, and no editor or pager that could block.
 func (r *repo) env() []string {
 	return append(os.Environ(),
+		"PATH="+r.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GH_CALLS="+r.ghCalls(),
+		"GH_EXISTING="+r.ghExisting(),
 		"HOME="+r.home,
 		"XDG_CONFIG_HOME="+filepath.Join(r.home, "config"),
 		"GIT_CONFIG_GLOBAL="+filepath.Join(r.home, "gitconfig"),
@@ -232,12 +238,79 @@ func (r *repo) log(branch string) []string {
 	return strings.Split(out, "\n")
 }
 
+// ghCalls is the file the stub gh appends every invocation to.
+func (r *repo) ghCalls() string { return filepath.Join(r.bin, "gh-calls.log") }
+
+// ghExisting is the file the stub gh answers "gh pr list" from.
+func (r *repo) ghExisting() string { return filepath.Join(r.bin, "gh-existing.json") }
+
+// stubGH puts a fake GitHub CLI on PATH. It records its arguments, answers
+// "pr list" from ghExisting (an empty list when that file is absent) and
+// answers "pr create" with a fixed pull request URL.
+func (r *repo) stubGH() {
+	r.t.Helper()
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$GH_CALLS"
+case "$1 $2" in
+"pr list")
+	if [ -f "$GH_EXISTING" ]; then cat "$GH_EXISTING"; else echo "[]"; fi
+	;;
+"pr create")
+	echo "https://github.com/example/repo/pull/7"
+	;;
+*)
+	echo "stub gh: unexpected call: $*" >&2
+	exit 1
+	;;
+esac
+`
+	path := filepath.Join(r.bin, "gh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// ghCallLog returns every stub gh invocation, one per line.
+func (r *repo) ghCallLog() string {
+	r.t.Helper()
+	data, err := os.ReadFile(r.ghCalls())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		r.t.Fatal(err)
+	}
+	return string(data)
+}
+
+// existingPullRequest makes the stub gh report an open pull request.
+func (r *repo) existingPullRequest(json string) {
+	r.t.Helper()
+	if err := os.WriteFile(r.ghExisting(), []byte(json), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// useGitHubURL points the remote's fetch URL at a GitHub repository while
+// pushes keep going to the local origin, so stk can both push for real and
+// derive a repository name for gh.
+func (r *repo) useGitHubURL() {
+	r.t.Helper()
+	r.git("remote", "set-url", "--push", "origin", r.Origin)
+	r.git("remote", "set-url", "origin", "https://github.com/example/repo.git")
+}
+
 // newRepo creates a repository with one commit on main, initialised for stk.
 func newRepo(t *testing.T) *repo {
 	t.Helper()
 	base := t.TempDir()
-	r := &repo{t: t, Root: filepath.Join(base, "repo"), home: filepath.Join(base, "home")}
-	mkdirAll(t, r.Root, r.home)
+	r := &repo{
+		t:    t,
+		Root: filepath.Join(base, "repo"),
+		home: filepath.Join(base, "home"),
+		bin:  filepath.Join(base, "bin"),
+	}
+	mkdirAll(t, r.Root, r.home, r.bin)
 	r.gitAt(r.Root, "init", "-q", "-b", "main", ".")
 	r.commit("README.md", "hello\n", "init")
 	r.stk("--no-interactive", "init")
@@ -253,8 +326,9 @@ func newRepoWithRemote(t *testing.T) *repo {
 		Root:   filepath.Join(base, "repo"),
 		Origin: filepath.Join(base, "origin.git"),
 		home:   filepath.Join(base, "home"),
+		bin:    filepath.Join(base, "bin"),
 	}
-	mkdirAll(t, r.Origin, r.home)
+	mkdirAll(t, r.Origin, r.home, r.bin)
 	r.gitAt(r.Origin, "init", "-q", "-b", "main", "--bare", ".")
 	r.runIn(base, "", "git", "clone", "-q", r.Origin, r.Root)
 	r.commit("README.md", "hello\n", "init")

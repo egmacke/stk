@@ -25,6 +25,9 @@ type Env struct {
 	// Confirm asks the user a yes/no question. It is nil when the command is
 	// running non-interactively.
 	Confirm func(question string, defaultYes bool) (bool, error)
+	// AskPullRequest collects the title and body of a pull request, offering
+	// stk's suggestions. It is nil when the command may not prompt.
+	AskPullRequest PullRequestText
 }
 
 // ErrConflict signals that a rebase stopped on a conflict and the operation

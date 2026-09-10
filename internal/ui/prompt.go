@@ -61,6 +61,59 @@ func ReadLine(question string) (string, error) {
 	return answer, nil
 }
 
+// ReadLineDefault asks an open question, offering def when the user answers
+// with an empty line.
+//
+// Unlike ReadLine an empty answer is a value, because the default is one stk
+// has already shown and the user is accepting it.
+func ReadLineDefault(question, def string) (string, error) {
+	prompt := question
+	if def != "" {
+		prompt = fmt.Sprintf("%s [%s]", question, def)
+	}
+	answer, err := ask(prompt)
+	if err != nil {
+		return "", err
+	}
+	if answer == "" {
+		return def, nil
+	}
+	return answer, nil
+}
+
+// ReadParagraph collects a multi-line answer, ending at a blank line or at the
+// end of input.
+//
+// The default is printed rather than pre-typed, since a terminal cannot offer
+// several lines for editing; answering nothing at all accepts it.
+func ReadParagraph(question, def string) (string, error) {
+	fmt.Fprintf(os.Stderr, "%s\n", question)
+	for _, line := range strings.Split(def, "\n") {
+		if line != "" {
+			fmt.Fprintf(os.Stderr, "    %s\n", line)
+		}
+	}
+	var lines []string
+	for {
+		fmt.Fprint(os.Stderr, "> ")
+		line, err := stdin.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		text := strings.TrimRight(line, "\r\n")
+		if strings.TrimSpace(text) != "" {
+			lines = append(lines, text)
+		}
+		if errors.Is(err, io.EOF) || strings.TrimSpace(text) == "" {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return def, nil
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
 // ask writes a question to stderr and reads one line of the answer.
 func ask(question string) (string, error) {
 	fmt.Fprintf(os.Stderr, "%s ", question)

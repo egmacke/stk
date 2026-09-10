@@ -131,6 +131,8 @@ func main() {
 		readyPR(args[2:])
 	case "pr close":
 		closePR(args[2:])
+	case "pr edit":
+		editPR(args[2:])
 	default:
 		if args[0] == "api" {
 			api(args[1:])
@@ -153,22 +155,47 @@ func authStatus() {
 func listPRs(args []string) {
 	values, _ := flags(args)
 	head := values["head"]
+	wantAll := values["state"] == "all"
 	s := load()
 	for _, pr := range s.PRs {
-		if pr.Head == head && pr.State == "OPEN" {
-			out, _ := json.Marshal([]pullRequest{pr})
-			fmt.Println(string(out))
+		if pr.Head != head {
+			continue
+		}
+		if !wantAll && pr.State != "OPEN" {
+			continue
+		}
+		out, _ := json.Marshal([]pullRequest{pr})
+		fmt.Println(string(out))
+		return
+	}
+	fmt.Println("[]")
+}
+
+func editPR(args []string) {
+	values, _ := flags(args)
+	n := prNumber(args, values)
+	base := values["base"]
+	if base == "" {
+		fail("only --base is understood by the stub: %s", strings.Join(args, " "))
+	}
+	s := load()
+	for i := range s.PRs {
+		if s.PRs[i].Number == n {
+			s.PRs[i].Base = base
+			s.save()
 			return
 		}
 	}
-	fmt.Println("[]")
+	fail("no pull request %d", n)
 }
 
 func createPR(args []string) {
 	values, switches := flags(args)
 	s := load()
 	for _, pr := range s.PRs {
-		if pr.Head == values["head"] {
+		// GitHub refuses a second open pull request for the same head, but a
+		// closed or merged one is no obstacle.
+		if pr.Head == values["head"] && pr.State == "OPEN" {
 			fail("a pull request for %s already exists", pr.Head)
 		}
 	}

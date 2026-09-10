@@ -94,6 +94,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	linked := 0
 	opened := 0
 	refreshed := 0
+	retargeted := 0
 	for _, b := range plan {
 		outcome, err := pushBranch(env, remote, b)
 		if err != nil {
@@ -112,9 +113,12 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		if !opts.Pull || !wanted[b.ID] {
 			continue
 		}
-		created, existed, err := ensurePullRequest(env, gh, g, b, opts, prs, drafts[b.ID], moved)
+		created, existed, moved2, err := ensurePullRequest(env, gh, g, b, opts, prs, drafts[b.ID], moved)
 		if err != nil {
 			return err
+		}
+		if moved2 {
+			retargeted++
 		}
 		switch {
 		case created:
@@ -143,12 +147,13 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		env.Out.Printf("")
 	}
 	env.Out.Printf("%s", submitSummary(env, submitCounts{
-		planned:   len(plan),
-		pushed:    pushed,
-		linked:    linked,
-		opened:    opened,
-		commented: commented,
-		refreshed: refreshed,
+		planned:    len(plan),
+		pushed:     pushed,
+		linked:     linked,
+		opened:     opened,
+		commented:  commented,
+		refreshed:  refreshed,
+		retargeted: retargeted,
 	}, opts))
 	return nil
 }
@@ -298,9 +303,9 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 //
 // An open pull request is never edited: someone may have rewritten the
 // description in the browser.
-func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions, prs *pullRequestCache, draft, moved bool) (created, existed bool, err error) {
+func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, opts SubmitOptions, prs *pullRequestCache, draft, moved bool) (created, existed, retargeted bool, err error) {
 	if b.IsTrunk {
-		return false, false, nil
+		return false, false, false, nil
 	}
 	base := g.Trunk.Name
 	if b.Parent != nil && !b.Parent.IsTrunk {
@@ -309,9 +314,20 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 	if !env.DryRun {
 		existing, err := prs.open(gh, b.Name)
 		if err != nil {
-			return false, false, err
+			return false, false, false, err
 		}
 		if existing != nil {
+			// The base is the one thing stk maintains on a pull request it did
+			// not open. A re-parent, a fold or a merged branch below leaves it
+			// pointing at the wrong branch, and the diff then shows commits
+			// that belong to another review.
+			if existing.Base != "" && existing.Base != base {
+				if err := gh.RetargetPullRequest(existing.Number, base); err != nil {
+					return false, false, false, err
+				}
+				env.Out.OK("Retargeted %s from %s onto %s", existing, existing.Base, base)
+				retargeted = true
+			}
 			// The push is what brought it up to date; say which happened.
 			what := "is already open for"
 			if moved {
@@ -319,21 +335,36 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 			}
 			env.Out.OK("Pull request %s %s %s", existing, what, b.Name)
 			env.Out.Printf("    %s", existing.URL)
-			return false, true, nil
+			return false, true, retargeted, nil
 		}
 	}
 	if opts.UpdateOnly {
 		env.Out.Skip("%s has no pull request; --update opens none", b.Name)
-		return false, false, nil
+		return false, false, false, nil
+	}
+	if !env.DryRun {
+		// No open pull request is not the same as never proposed: a merged one
+		// means the branch has landed, and opening a second would propose the
+		// same change twice.
+		if latest, err := gh.LatestPullRequest(b.Name); err == nil && latest != nil {
+			if latest.IsMerged() {
+				env.Out.Skip("%s was merged as %s; not opening another", b.Name, latest)
+				env.Out.Printf("    Remove the branch with stk sync --cleanup")
+				return false, false, false, nil
+			}
+			if latest.State == "CLOSED" {
+				env.Out.Printf("%s was closed for %s; opening a new one", latest, b.Name)
+			}
+		}
 	}
 	if b.Base != "" && env.Repo.CountCommits(b.Base, b.SHA) == 0 {
 		env.Out.Skip("%s adds no commits to %s; no pull request opened", b.Name, base)
-		return false, false, nil
+		return false, false, false, nil
 	}
 
 	title, body, err := pullRequestText(env, b, base, opts)
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 
 	if env.DryRun {
@@ -345,7 +376,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		env.Out.Printf("    title: %s", title)
 		// Counted, because the summary of a dry run is written in the
 		// conditional too.
-		return true, false, nil
+		return true, false, false, nil
 	}
 	pr, err := gh.CreatePullRequest(forge.CreateOptions{
 		Head:  b.Name,
@@ -355,7 +386,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		Draft: draft,
 	})
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 	kind := "Opened pull request"
 	if draft {
@@ -370,7 +401,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		env.Out.Printf("    %s", pr.URL)
 	}
 	prs.record(b.Name, pr)
-	return true, false, nil
+	return true, false, false, nil
 }
 
 // missingPullRequests lists the branches stk was asked to propose that have no
@@ -473,12 +504,13 @@ func bulletBody(subjects []string) string {
 
 // submitCounts is what one submit run did.
 type submitCounts struct {
-	planned   int
-	pushed    int
-	linked    int
-	opened    int
-	refreshed int
-	commented int
+	planned    int
+	pushed     int
+	linked     int
+	opened     int
+	refreshed  int
+	retargeted int
+	commented  int
 }
 
 // submitSummary closes the run. A dry run reports in the conditional, because
@@ -502,6 +534,9 @@ func submitSummary(env *Env, c submitCounts, opts SubmitOptions) string {
 	}
 	if opts.Pull && c.refreshed > 0 {
 		parts = append(parts, fmt.Sprintf("%d pull request(s) refreshed", c.refreshed))
+	}
+	if c.retargeted > 0 {
+		parts = append(parts, fmt.Sprintf("%d retargeted", c.retargeted))
 	}
 	if c.commented > 0 {
 		what := "stack comment(s) written"

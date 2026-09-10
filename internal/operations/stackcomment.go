@@ -35,8 +35,8 @@ func renderStackComment(entries []stackEntry, current int) string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nEach pull request is based on the one above it in this list, so review and\n")
-	b.WriteString("merge from the top down.\n\nMaintained by `stk submit`.")
+	b.WriteString("\nEach pull request is based on the one before it, so merge them in the order\n")
+	b.WriteString("listed, starting with the first.\n\nMaintained by `stk submit`.")
 	return b.String()
 }
 

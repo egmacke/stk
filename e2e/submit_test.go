@@ -262,6 +262,70 @@ func TestSubmitUpdateDoesNotPublishAncestors(t *testing.T) {
 	requireContains(t, out, "service has no pull request; --update opens none")
 }
 
+func TestSubmitRetargetsAStalePullRequestBase(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+	requireEqual(t, r.pullRequestBase(3), "service", "ui was opened against service")
+
+	// The stack changes shape under the pull requests.
+	r.stk("move", "ui", "--onto", "api")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Retargeted #3 from service onto api")
+	requireContains(t, out, "1 retargeted")
+	requireEqual(t, r.pullRequestBase(3), "api", "the base followed the stack")
+	// The edit carries the base and nothing else: title, body and draft state
+	// are the author's.
+	requireContains(t, r.ghCallLog(), "pr edit --repo example/repo 3 --base api")
+	requireEqual(t, r.pullRequestBase(2), "api", "an already-correct base is left alone")
+}
+
+func TestSubmitRetargetsAfterAFold(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+
+	// service is folded away, so ui's pull request is based on a branch that
+	// no longer exists.
+	r.stk("checkout", "service")
+	r.stk("fold", "--yes")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Retargeted #3 from service onto api")
+	requireEqual(t, r.pullRequestBase(3), "api", "the base followed the fold")
+}
+
+func TestSubmitWillNotProposeAMergedBranchTwice(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+	r.mergedPullRequest(1, "api", "main", "Add api")
+
+	out := r.stk("submit", "-pn")
+	requireContains(t, out, "api was merged as #1; not opening another")
+	requireContains(t, out, "stk sync --cleanup")
+	requireNotContains(t, r.ghCallLog(), "pr create")
+}
+
+func TestSubmitOpensANewPullRequestAfterOneWasClosed(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+	r.existingPullRequest(1, "api", "main", "Add api")
+	r.setPullRequestState(1, "CLOSED")
+
+	out := r.stk("submit", "-pn")
+	requireContains(t, out, "#1 was closed for api; opening a new one")
+	requireContains(t, out, "Opened pull request #2")
+}
+
 func TestSubmitLeavesAnOpenPullRequestAlone(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
@@ -318,6 +382,7 @@ func TestSubmitCommentsTheStackOnEveryPullRequest(t *testing.T) {
 		body := comments[0]
 		requireContains(t, body, "<!-- stk:stack -->")
 		requireContains(t, body, "1. #1 `api`")
+		requireContains(t, body, "merge them in the order")
 		requireContains(t, body, "2. #2 `service`")
 		requireContains(t, body, "3. #3 `ui`")
 		// Only the reader's own pull request is marked.

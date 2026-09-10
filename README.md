@@ -313,11 +313,33 @@ no reason.
 A stack of one pull request gets no comment. `--no-comment` skips the whole
 business.
 
-An **open pull request is never edited**: `stk` pushes the branch, prints the
-existing PR and leaves its title, body and draft state alone, because someone
-may have rewritten them in the browser. The stack comment is the one thing
-`stk` maintains, and it is a comment rather than an edit to the description for
-exactly that reason.
+An open pull request's **title, body and draft state are never edited**: `stk`
+pushes the branch, prints the existing PR and leaves them alone, because
+someone may have rewritten them in the browser. The stack comment is a comment
+rather than an edit to the description for exactly that reason.
+
+Its **base** is a different matter, and `stk` does keep that in step. A base is
+structural — it is what makes a stacked pull request show only its own commits
+— so when the stack changes shape under it, `stk` retargets it:
+
+```console
+$ stk ss -u
+✓ Retargeted #3 from sc-123/service onto sc-123/api
+✓ Pull request #3 was refreshed for sc-123/ui
+```
+
+Without that, a `stk move`, a `stk fold`, or a merged branch below leaves the
+pull request pointing at a branch that has moved or gone, and GitHub then
+computes the diff from a common ancestor further back — so the review shows
+commits that belong to somebody else's pull request.
+
+A branch whose pull request has already **merged** is never proposed again:
+
+```console
+$ stk submit -p
+⊘ sc-123/api was merged as #1; not opening another
+    Remove the branch with stk sync --cleanup
+```
 
 ```console
 $ stk submit -p

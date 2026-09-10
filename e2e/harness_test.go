@@ -371,6 +371,51 @@ func (r *repo) appendPRComment(number int, body string) {
 	}
 }
 
+// mergedPullRequest seeds the stub gh with a pull request that has landed.
+func (r *repo) mergedPullRequest(number int, head, base, title string) {
+	r.t.Helper()
+	r.existingPullRequest(number, head, base, title)
+	r.setPullRequestState(number, "MERGED")
+}
+
+// setPullRequestState rewrites one pull request's state in the stub's store.
+func (r *repo) setPullRequestState(number int, state string) {
+	r.t.Helper()
+	var raw map[string]any
+	data, err := os.ReadFile(r.ghState())
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		r.t.Fatal(err)
+	}
+	prs, _ := raw["prs"].([]any)
+	for _, entry := range prs {
+		pr, _ := entry.(map[string]any)
+		if n, ok := pr["number"].(float64); ok && int(n) == number {
+			pr["state"] = state
+		}
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(r.ghState(), out, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// pullRequestBase reads a pull request's base branch from the stub's store.
+func (r *repo) pullRequestBase(number int) string {
+	r.t.Helper()
+	for _, pr := range r.ghStubState().PRs {
+		if pr.Number == number {
+			return pr.Base
+		}
+	}
+	return ""
+}
+
 // existingPullRequest seeds the stub gh with a pull request stk did not open.
 func (r *repo) existingPullRequest(number int, head, base, title string) {
 	r.t.Helper()

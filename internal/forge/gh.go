@@ -101,14 +101,27 @@ func (g *GH) exec(full ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// prFields are the pull request fields stk reads.
+const prFields = "number,url,title,isDraft,state,baseRefName"
+
 // OpenPullRequest returns the open pull request whose head is branch, or nil
 // when there is none.
 func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {
+	return g.pullRequest(branch, "open")
+}
+
+// LatestPullRequest returns the most recent pull request for a branch
+// whatever its state, so stk can tell "never proposed" from "already merged".
+func (g *GH) LatestPullRequest(branch string) (*PullRequest, error) {
+	return g.pullRequest(branch, "all")
+}
+
+func (g *GH) pullRequest(branch, state string) (*PullRequest, error) {
 	out, err := g.run("pr", "list",
 		"--head", branch,
-		"--state", "open",
+		"--state", state,
 		"--limit", "1",
-		"--json", "number,url,title,isDraft,state")
+		"--json", prFields)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +136,16 @@ func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {
 		return nil, nil
 	}
 	return &prs[0], nil
+}
+
+// RetargetPullRequest points an open pull request at another base branch.
+//
+// The base is the one thing stk maintains on a pull request it did not open:
+// it is structural, not authored, and a stale base makes the diff show commits
+// that belong to another review.
+func (g *GH) RetargetPullRequest(number int, base string) error {
+	_, err := g.run("pr", "edit", fmt.Sprintf("%d", number), "--base", base)
+	return err
 }
 
 // ClosePullRequest closes a pull request, saying why.

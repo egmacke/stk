@@ -89,7 +89,7 @@ func newMoveCmd() *cobra.Command {
 		},
 		ValidArgsFunction: branchNameCompletion,
 	}
-	cmd.Flags().StringVar(&onto, "onto", "", "new parent `branch`")
+	cmd.Flags().StringVarP(&onto, "onto", "o", "", "new parent `branch`")
 	_ = cmd.RegisterFlagCompletionFunc("onto", branchNameCompletion)
 	return cmd
 }

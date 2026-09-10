@@ -163,6 +163,32 @@ trunk.
 `--cwd` and `--json` make `stk` easy to drive from scripts, editors and coding
 agents. Without a terminal, `stk` never opens an interactive selector.
 
+Global flags are long-form only, deliberately. They are stripped before an
+unrecognised command is handed to git, so a short `-q` on `stk commit` would
+swallow git's own `-q` instead of forwarding it.
+
+## Flag shorthands
+
+Per-command flags have short forms, scoped to their command the way git's are:
+
+```text
+create   -f --from
+init     -t --trunk        -r --remote
+track    -p --parent
+untrack  -p --reparent     -r --recursive
+move     -o --onto
+restack  -u --up           -o --only
+sync     -s --stack
+stack    -a --all          -l --legend      -j --json
+show     -j --json
+info     -j --json
+doctor   -j --json
+```
+
+`--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup` and
+`--rebase-merges` have none: a slipped letter should not disable a safety or
+delete a branch.
+
 ## Missing arguments
 
 Commands that need a value ask for it rather than printing usage. `stk create`

@@ -96,3 +96,41 @@ func TestConflictingScopeFlagsAreRejected(t *testing.T) {
 	requireContains(t, r.stkFail("sync", "--cleanup", "--no-cleanup"), "not both")
 	requireContains(t, r.stkFail("--interactive", "--no-interactive", "stack"), "not both")
 }
+
+func TestShorthandFlags(t *testing.T) {
+	r := newRepo(t)
+
+	// Value-taking flags.
+	r.stk("create", "api", "-f", "main")
+	r.commit("api.txt", "api\n", "api")
+	r.git("switch", "-q", "-c", "loose")
+	r.commit("loose.txt", "loose\n", "loose work")
+	r.stk("track", "loose", "-p", "api")
+	requireEqual(t, r.parentOf("loose"), "api", "parent set with -p")
+	r.stk("move", "loose", "-o", "main")
+	requireEqual(t, r.parentOf("loose"), "main", "parent set with -o")
+	r.stk("untrack", "loose", "-r")
+	if r.tracked("loose") {
+		t.Fatal("-r did not untrack")
+	}
+
+	// Boolean flags.
+	requireContains(t, r.stk("stack", "-j"), `"branches"`)
+	requireContains(t, r.stk("info", "api", "-j"), `"name"`)
+	requireContains(t, r.stk("doctor", "-j"), `"checks"`)
+	requireContains(t, r.stk("stack", "-a"), "loose")
+	requireContains(t, r.stk("stack", "-l"), "requires restack")
+	r.stk("checkout", "api")
+	requireContains(t, r.stk("restack", "-o"), "api")
+	requireContains(t, r.stk("restack", "-u"), "api")
+	requireContains(t, r.stk("sync", "-s", "--no-cleanup"), "api")
+}
+
+// Global flags stay long-form only: they are stripped before an unknown
+// command reaches git, and single letters collide with git's own options.
+func TestGlobalFlagsHaveNoShorthand(t *testing.T) {
+	r := newRepo(t)
+	requireContains(t, r.stkFail("-q", "stack"), "unknown shorthand flag")
+	// git still receives its own short flags untouched.
+	requireContains(t, r.stkAt(r.Root, "", "log", "-1", "--format=%s").Stdout, "init")
+}

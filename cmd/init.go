@@ -33,8 +33,8 @@ func newInitCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&trunk, "trunk", "", "trunk branch name (detected when omitted)")
-	cmd.Flags().StringVar(&remote, "remote", "", "default remote (detected when omitted)")
+	cmd.Flags().StringVarP(&trunk, "trunk", "t", "", "trunk branch name (detected when omitted)")
+	cmd.Flags().StringVarP(&remote, "remote", "r", "", "default remote (detected when omitted)")
 	return cmd
 }
 

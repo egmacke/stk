@@ -81,7 +81,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	}
 
 	env.Out.Printf("")
-	env.Out.Printf("%s", submitSummary(len(plan), pushed, opened, opts))
+	env.Out.Printf("%s", submitSummary(env, len(plan), pushed, opened, opts))
 	return nil
 }
 
@@ -239,7 +239,9 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 	if env.DryRun {
 		env.Out.Printf("(dry-run) would open a pull request for %s onto %s", b.Name, base)
 		env.Out.Printf("    title: %s", title)
-		return false, nil
+		// Counted, because the summary of a dry run is written in the
+		// conditional too.
+		return true, nil
 	}
 	pr, err := gh.CreatePullRequest(forge.CreateOptions{
 		Head:  b.Name,
@@ -297,19 +299,27 @@ func bulletBody(subjects []string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func submitSummary(planned, pushed, opened int, opts SubmitOptions) string {
+// submitSummary closes the run. A dry run reports in the conditional, because
+// it has published nothing.
+func submitSummary(env *Env, planned, pushed, opened int, opts SubmitOptions) string {
+	pushedVerb, openedVerb := "pushed", "opened"
+	if env.DryRun {
+		pushedVerb, openedVerb = "would be pushed", "would be opened"
+	}
 	var parts []string
-	switch {
-	case pushed == 0:
+	if pushed == 0 {
 		parts = append(parts, "Nothing to push")
-	default:
-		parts = append(parts, fmt.Sprintf("%d branch(es) pushed", pushed))
+	} else {
+		parts = append(parts, fmt.Sprintf("%d branch(es) %s", pushed, pushedVerb))
 	}
 	if opts.Pull && opened > 0 {
-		parts = append(parts, fmt.Sprintf("%d pull request(s) opened", opened))
+		parts = append(parts, fmt.Sprintf("%d pull request(s) %s", opened, openedVerb))
 	}
 	if planned > pushed && pushed > 0 {
 		parts = append(parts, fmt.Sprintf("%d already up to date", planned-pushed))
+	}
+	if env.DryRun {
+		parts = append(parts, "nothing has been published")
 	}
 	return strings.Join(parts, ", ") + "."
 }

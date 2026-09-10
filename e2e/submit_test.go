@@ -226,6 +226,9 @@ func TestSubmitDryRunPushesNothing(t *testing.T) {
 	out := r.stk("submit", "--pull", "--no-prompt", "--dry-run")
 	requireContains(t, out, "(dry-run) would push api to origin (created)")
 	requireContains(t, out, "(dry-run) would open a pull request for api onto main")
+	requireContains(t, out, "1 branch(es) would be pushed")
+	requireContains(t, out, "1 pull request(s) would be opened")
+	requireContains(t, out, "nothing has been published")
 	requireNotContains(t, remoteHeads(r), "refs/heads/api")
 	requireEqual(t, r.ghCallLog(), "", "gh was never called")
 }

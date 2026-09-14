@@ -67,7 +67,8 @@ func NewRoot() *cobra.Command {
 			"Short forms:\n" +
 			"  c    create       co   checkout     r    restack\n" +
 			"  tr   track        utr  untrack      rn   rename\n" +
-			"  cont continue     ab   abort\n\n" +
+			"  cont continue     ab   abort         s    submit\n" +
+			"  ss   submit --stack\n\n" +
 			"A short form is a native stk command and always wins over git. To reach\n" +
 			"a git command of the same name, put -- first:\n\n" +
 			"  stk -- r          runs: git r",
@@ -108,7 +109,9 @@ func NewRoot() *cobra.Command {
 		newUntrackCmd(),
 		newRenameCmd(),
 		newMoveCmd(),
+		newReadyCmd(),
 		newRestackCmd(),
+		newSubmitCmd(),
 		newSyncCmd(),
 		newContinueCmd(),
 		newAbortCmd(),

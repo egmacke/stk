@@ -15,12 +15,14 @@ var aliased = map[string]string{
 	"rn":   "rename",
 	"cont": "continue",
 	"ab":   "abort",
+	"s":    "submit",
+	"ss":   "submit",
 }
 
 // notAliased lists short names stk deliberately does not claim. git does not
 // know them either, so they must come back as git's own "not a git command".
 var notAliased = []string{
-	"s", "sy", "u", "d", "t", "b", "i", "p", "ch", "st", "sh", "dr", "in", "cr", "rs", "ct", "ut", "mo",
+	"sy", "u", "d", "t", "b", "i", "p", "ch", "st", "sh", "dr", "in", "cr", "rs", "ct", "ut", "mo",
 }
 
 // gitOwned lists short names that are real git commands. stk must not shadow
@@ -132,6 +134,13 @@ func TestDoubleDashForcesPassthrough(t *testing.T) {
 	res := r.stkAt(r.Root, "", "--", "r")
 	if res.Code == 0 {
 		t.Fatal("stk -- r should have reached git")
+	}
+	requireContains(t, res.All(), "is not a git command")
+
+	// s is stk's submit, so a git alias of that name is reached the same way.
+	res = r.stkAt(r.Root, "", "--", "s")
+	if res.Code == 0 {
+		t.Fatal("stk -- s should have reached git")
 	}
 	requireContains(t, res.All(), "is not a git command")
 

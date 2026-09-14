@@ -11,9 +11,10 @@ truth.
 Everything else — branches, commits, refs, rebases, worktrees, the index — stays
 plain git. You can stop using `stk` at any moment and carry on with git alone.
 
-There is no hosted service, no account, no GitHub or GitLab integration, no
-pull-request management and no background daemon. The only runtime dependency
-is `git`.
+There is no hosted service, no account, no stored token, no PR or CI status
+tracking and no background daemon. `git` is the only dependency; `stk submit
+--pull` shells out to the [GitHub CLI](https://cli.github.com) to open a pull
+request when you ask it to, and everything else works with no forge at all.
 
 ## Install
 
@@ -72,6 +73,8 @@ stk restack
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
+| `stk submit [branch] [--pull] [--draft] [--stack]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
+| `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
@@ -92,12 +95,19 @@ stk commit -am foo  # runs: git commit -am foo
 | `r` | `restack` | `tr` | `track` |
 | `utr` | `untrack` | `rn` | `rename` |
 | `cont` | `continue` | `ab` | `abort` |
+| `s` | `submit` | `ss` | `submit --stack` |
 
 ```bash
 stk c sc-123/api
 stk r --up
 stk cont
+stk s               # push the current branch
+stk ss              # refresh every pushed branch of the stack
+stk ss -pn          # ... and propose the whole stack
 ```
+
+`ss` is the only short form that carries a flag of its own; every other flag
+still applies through it.
 
 A short form is a native stk command and always wins over the git passthrough,
 including over a git alias of the same name. To reach a git command that shares
@@ -108,9 +118,9 @@ stk -- r            # runs: git r
 stk -- log --oneline
 ```
 
-Only these eight names are claimed. Everything else stays available to git, so
-`stk mv`, `stk st`, `stk s` and any git alias of yours still pass straight
-through. There is no prefix matching: `stk resta` is a git command, not
+Only these ten names are claimed. Everything else stays available to git, so
+`stk mv`, `stk st` and any git alias of yours still pass straight through. If
+you have `git s` aliased to something of your own, reach it with `stk -- s`. There is no prefix matching: `stk resta` is a git command, not
 `restack`. User-defined aliases remain a phase-two item; write shell or git
 aliases in the meantime.
 
@@ -137,7 +147,177 @@ With sibling branches, `stk restack` from `C` still processes `A`, `B`, `D`,
 `C` and `E` — the entire connected tree rooted at the lowest branch above
 trunk.
 
-### Status markers
+### Publishing a stack
+
+`stk submit` pushes the current branch to the configured remote, creating it
+there if needed:
+
+```console
+$ stk submit
+✓ Pushed sc-123/api to origin (created)
+
+1 branch(es) pushed.
+```
+
+The remote branch becomes the branch's upstream, so `↑?` clears and git knows
+where it went. A branch whose commit the remote already holds but whose
+upstream is missing has that link recorded locally, with no push at all.
+
+A branch a restack has rewritten no longer fast-forwards, so `stk` pushes it
+with `--force-with-lease`: the remote branch is replaced only while it still
+holds the commit `stk` last published. If someone else has pushed in the
+meantime the push is declined and nothing is overwritten.
+
+```console
+$ stk submit --stack
+✓ Pushed sc-123/api to origin (forced)
+✓ Pushed sc-123/service to origin (forced)
+```
+
+### Pull requests
+
+`--pull` (`-p`) also opens a pull request through the
+[GitHub CLI](https://cli.github.com), based on the branch's **stack parent**
+rather than trunk, so each review shows only that branch's commits:
+
+```bash
+stk submit --pull                  # asks for a title and body
+stk submit --pull --no-prompt      # generates both
+stk submit --draft                 # a draft PR; -d implies --pull
+stk submit --stack --pull          # one PR per branch, each onto its parent
+```
+
+| Flag | Short | Effect |
+| --- | --- | --- |
+| `--pull` | `-p` | open a pull request as well as pushing |
+| `--draft` | `-d` | open every new pull request as a draft |
+| `--draft-from <branch>` | | open that branch and everything above it as drafts |
+| `--draft-branch <branch>` | | open just that branch as a draft; repeatable |
+| `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
+| `--stack` | `-s` | submit every branch in the stack, each onto its parent |
+| `--no-comment` | | leave the stack comment on each pull request alone |
+
+Every draft flag implies `--pull`, and they are mutually exclusive — there is
+never a question of which one wins.
+
+Without `-n` the title and body are asked for, prefilled from the branch's
+commits; press enter to accept an offer. Without a terminal, `--pull` needs
+`-n`, so scripts and agents never hang on a prompt.
+
+A pull request cannot be based on a branch the remote does not have, so
+ancestors that have never been pushed are pushed first — they are not
+proposed, only published. `--stack` is what proposes the whole chain.
+
+### Ready and draft
+
+A stack is usually ready at the bottom and still being written at the top, so
+`stk` asks one question rather than one per branch. With no draft flag given
+and more than one pull request to open, it asks where the stack stops being
+ready:
+
+```console
+$ stk ss -p
+
+Ready for review up to (everything above it opens as a draft)
+
+  main
+  sc-123/api
+> sc-123/service        ← everything above this opens as a draft
+  sc-123/ui
+
+✓ Opened pull request #1 for sc-123/api onto main
+✓ Opened pull request #2 for sc-123/service onto sc-123/api
+✓ Opened draft pull request #3 for sc-123/ui onto sc-123/service
+```
+
+The branch you pick is ready, along with everything below it. Choosing trunk
+says nothing is ready yet; choosing the topmost branch says everything is.
+Dismissing the question opens no drafts. Over a pipe (`--interactive`) the name
+is typed instead of picked, and `-n` skips the question altogether.
+
+The same decision is available without asking:
+
+```bash
+stk ss -p -d                              # all of them drafts
+stk ss -p --draft-from sc-123/service     # service and up are drafts
+stk ss -p --draft-branch sc-123/ui        # just this one
+```
+
+Draft state is only ever decided for pull requests `stk` **opens**. To change
+one that is already open:
+
+```bash
+stk ready                  # this branch's pull request is ready for review
+stk ready --stack          # the whole stack
+stk ready --undo           # back to a draft
+```
+
+```console
+$ stk ready --stack
+✓ #1 is ready for review
+    https://github.com/acme/tool/pull/1
+⊘ #2 is already ready for review
+⊘ no pull request is open for sc-123/ui
+```
+
+### The stack comment
+
+Every pull request in a submitted stack carries **one** `stk` comment naming
+the whole chain in order, so a reviewer landing on any of them can see where it
+sits:
+
+> ### Stack
+>
+> 1. #1 `sc-123/api`
+> 2. #2 `sc-123/service` ← this pull request
+> 3. #3 `sc-123/ui`
+>
+> Each pull request is based on the one above it in this list, so review and
+> merge from the top down.
+
+It is written once and then edited in place — add a branch and every existing
+comment is rewritten, not duplicated. `stk` finds its own comment by a hidden
+marker and addresses the edit by that comment's id, so a comment somebody else
+wrote is never touched, whatever order the timeline is in. A body that already
+says exactly the right thing is left alone entirely, so nothing is bumped for
+no reason.
+
+A stack of one pull request gets no comment. `--no-comment` skips the whole
+business.
+
+An **open pull request is never edited**: `stk` pushes the branch, prints the
+existing PR and leaves its title, body and draft state alone, because someone
+may have rewritten them in the browser. The stack comment is the one thing
+`stk` maintains, and it is a comment rather than an edit to the description for
+exactly that reason.
+
+```console
+$ stk submit -p
+✓ Pushed sc-123/api to origin (updated)
+✓ Pull request #42 is already open for sc-123/api
+    https://github.com/acme/tool/pull/42
+```
+
+`gh` is needed only for `--pull`; pushing works without it. Both that it is
+installed and that it is logged in to the remote's host are checked **before
+the first push**, so a run cannot publish a stack of branches and only then
+discover it cannot propose them:
+
+```console
+$ stk submit -sp
+stk: the GitHub CLI is not logged in for github.com
+
+    gh: You are not logged into any GitHub hosts.
+
+Log in with:
+
+    gh auth login --hostname github.com
+```
+
+Nothing about a pull request is stored in the repository — `stk` keeps no PR
+numbers, no status and no token.
+
+## Status markers
 
 ```text
 ↑N   commits not pushed          ↓N   commits behind upstream
@@ -178,6 +358,8 @@ track    -p --parent
 untrack  -p --reparent     -r --recursive
 move     -o --onto
 restack  -u --up           -o --only
+submit   -p --pull         -d --draft       -n --no-prompt   -s --stack
+ready    -s --stack
 sync     -s --stack
 stack    -a --all          -l --legend      -j --json
 show     -j --json
@@ -185,10 +367,19 @@ info     -j --json
 doctor   -j --json
 ```
 
+Shorthands bundle, as git's do, so a run of switches is one token:
+
+```bash
+stk submit -spn        # --stack --pull --no-prompt
+stk stack -alj         # --all --legend --json
+stk create api -fmain  # --from main, value attached
+```
+
 `--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
-`--autostash`, `--no-autostash` and `--rebase-merges` have none: a slipped
-letter should not disable a safety, delete a branch or move someone's
-uncommitted work.
+`--autostash`, `--no-autostash`, `--no-comment`, `--draft-from`,
+`--draft-branch`, `--undo` and `--rebase-merges` have none: a slipped letter
+should not disable a safety, delete a branch, move someone's uncommitted work
+or change what a reviewer is looking at.
 
 ## Missing arguments
 
@@ -316,7 +507,9 @@ commits belong to the branch.
 - never flattens merge commits without `--rebase-merges`;
 - never hides a git conflict;
 - never initialises a repository silently;
-- never pushes, force-pushes or merges.
+- never pushes unless you run `stk submit`, and never force-pushes without a
+  lease on what it is replacing;
+- never merges, and never edits a pull request it did not open in that run.
 
 When a restack hits a conflict it stops, tells you exactly what to do, and
 keeps a journal so `stk continue` resumes the *original* scope and `stk abort`
@@ -341,7 +534,8 @@ main.go                 entry point
 cmd/                    cobra commands; no direct git orchestration
 internal/git/           the only code that runs git
 internal/stack/         metadata and the in-memory graph
-internal/operations/    create, track, rename, move, restack, sync, continue, abort
+internal/operations/    create, track, rename, move, restack, submit, ready, sync, continue, abort
+internal/forge/         the only code that knows about GitHub, through gh
 internal/config/        repository-wide settings
 internal/ui/            branch picker, prompts, tree rendering
 internal/output/        text and JSON output

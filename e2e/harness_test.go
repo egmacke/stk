@@ -5,15 +5,20 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-var stkBin string
+var (
+	stkBin    string
+	stubGHBin string
+)
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "stk-build-")
@@ -31,6 +36,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "building stk: %v\n", err)
 		os.Exit(1)
 	}
+
+	// The fake GitHub CLI is a real program, so the comment endpoints stk uses
+	// can be answered with correct JSON and asserted on.
+	stubGHBin = filepath.Join(dir, "gh")
+	build = exec.Command("go", "build", "-o", stubGHBin, "./stubgh")
+	build.Stdout = os.Stderr
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "building the stub gh: %v\n", err)
+		os.Exit(1)
+	}
 	os.Exit(m.Run())
 }
 
@@ -40,12 +56,19 @@ type repo struct {
 	Root   string
 	Origin string
 	home   string
+	// bin is prepended to PATH, so a test can put a stub gh in front of any
+	// real one and assert on how stk called it.
+	bin string
 }
 
 // env returns a hermetic environment: no user or system git config, a fixed
 // identity, and no editor or pager that could block.
 func (r *repo) env() []string {
 	return append(os.Environ(),
+		"PATH="+r.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GH_CALLS="+r.ghCalls(),
+		"GH_STATE="+r.ghState(),
+		"GH_UNAUTHENTICATED="+r.ghUnauthenticated(),
 		"HOME="+r.home,
 		"XDG_CONFIG_HOME="+filepath.Join(r.home, "config"),
 		"GIT_CONFIG_GLOBAL="+filepath.Join(r.home, "gitconfig"),
@@ -232,12 +255,185 @@ func (r *repo) log(branch string) []string {
 	return strings.Split(out, "\n")
 }
 
+// ghCalls is the file the stub gh appends every invocation to.
+func (r *repo) ghCalls() string { return filepath.Join(r.bin, "gh-calls.log") }
+
+// ghState is the stub gh's pull request and comment store.
+func (r *repo) ghState() string { return filepath.Join(r.bin, "gh-state.json") }
+
+// ghUnauthenticated is the file whose presence makes the stub gh refuse.
+func (r *repo) ghUnauthenticated() string { return filepath.Join(r.bin, "gh-logged-out") }
+
+// stubGH puts the fake GitHub CLI on PATH.
+func (r *repo) stubGH() {
+	r.t.Helper()
+	if err := os.Symlink(stubGHBin, filepath.Join(r.bin, "gh")); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// logOutGH makes the stub gh report that nobody is logged in.
+func (r *repo) logOutGH() {
+	r.t.Helper()
+	if err := os.WriteFile(r.ghUnauthenticated(), nil, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// ghCallLog returns every stub gh invocation, one per line.
+func (r *repo) ghCallLog() string {
+	r.t.Helper()
+	data, err := os.ReadFile(r.ghCalls())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		r.t.Fatal(err)
+	}
+	return string(data)
+}
+
+// ghStubState is the stub gh's store, decoded.
+type ghStubState struct {
+	PRs []struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		Base   string `json:"baseRefName"`
+		Head   string `json:"headRefName"`
+		Draft  bool   `json:"isDraft"`
+	} `json:"prs"`
+	Comments map[string][]struct {
+		ID    int64  `json:"id"`
+		Body  string `json:"body"`
+		Login string `json:"login"`
+	} `json:"comments"`
+}
+
+func (r *repo) ghStubState() ghStubState {
+	r.t.Helper()
+	var state ghStubState
+	data, err := os.ReadFile(r.ghState())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return state
+		}
+		r.t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		r.t.Fatal(err)
+	}
+	return state
+}
+
+// prComments returns the comments the stub gh holds for one pull request.
+func (r *repo) prComments(number int) []string {
+	r.t.Helper()
+	var out []string
+	for _, c := range r.ghStubState().Comments[strconv.Itoa(number)] {
+		out = append(out, c.Body)
+	}
+	return out
+}
+
+// appendPRComment adds a comment to the stub gh's store, as another person
+// commenting on the pull request would.
+func (r *repo) appendPRComment(number int, body string) {
+	r.t.Helper()
+	var raw map[string]any
+	data, err := os.ReadFile(r.ghState())
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		r.t.Fatal(err)
+	}
+	comments, _ := raw["comments"].(map[string]any)
+	if comments == nil {
+		comments = map[string]any{}
+		raw["comments"] = comments
+	}
+	key := strconv.Itoa(number)
+	list, _ := comments[key].([]any)
+	next, _ := raw["nextComment"].(float64)
+	if next == 0 {
+		next = 1001
+	}
+	comments[key] = append(list, map[string]any{"id": next, "body": body, "login": "reviewer"})
+	raw["nextComment"] = next + 1
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(r.ghState(), out, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// existingPullRequest seeds the stub gh with a pull request stk did not open.
+func (r *repo) existingPullRequest(number int, head, base, title string) {
+	r.t.Helper()
+	state := struct {
+		NextPR      int              `json:"nextPr"`
+		NextComment int64            `json:"nextComment"`
+		PRs         []map[string]any `json:"prs"`
+	}{
+		NextPR:      number + 1,
+		NextComment: 1001,
+		PRs: []map[string]any{{
+			"number":      number,
+			"url":         fmt.Sprintf("https://github.com/example/repo/pull/%d", number),
+			"title":       title,
+			"baseRefName": base,
+			"headRefName": head,
+			"state":       "OPEN",
+		}},
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(r.ghState(), data, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// useGitHubURL points the remote's fetch URL at a GitHub repository while
+// pushes keep going to the local origin, so stk can both push for real and
+// derive a repository name for gh.
+func (r *repo) useGitHubURL() {
+	r.t.Helper()
+	r.git("remote", "set-url", "--push", "origin", r.Origin)
+	r.git("remote", "set-url", "origin", "https://github.com/example/repo.git")
+}
+
+// tempBase returns a temporary directory with every symlink resolved.
+//
+// macOS puts temporary directories under /var/folders, which is itself a
+// symlink to /private/var/folders. Git reports the resolved path — for a
+// worktree, for the top level, for everything — so a test that built an
+// expected path out of t.TempDir() would be comparing the two spellings of one
+// directory and would fail on macOS alone.
+func tempBase(t *testing.T) string {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base
+}
+
 // newRepo creates a repository with one commit on main, initialised for stk.
 func newRepo(t *testing.T) *repo {
 	t.Helper()
-	base := t.TempDir()
-	r := &repo{t: t, Root: filepath.Join(base, "repo"), home: filepath.Join(base, "home")}
-	mkdirAll(t, r.Root, r.home)
+	base := tempBase(t)
+	r := &repo{
+		t:    t,
+		Root: filepath.Join(base, "repo"),
+		home: filepath.Join(base, "home"),
+		bin:  filepath.Join(base, "bin"),
+	}
+	mkdirAll(t, r.Root, r.home, r.bin)
 	r.gitAt(r.Root, "init", "-q", "-b", "main", ".")
 	r.commit("README.md", "hello\n", "init")
 	r.stk("--no-interactive", "init")
@@ -247,14 +443,15 @@ func newRepo(t *testing.T) *repo {
 // newRepoWithRemote creates a bare origin and a clone initialised for stk.
 func newRepoWithRemote(t *testing.T) *repo {
 	t.Helper()
-	base := t.TempDir()
+	base := tempBase(t)
 	r := &repo{
 		t:      t,
 		Root:   filepath.Join(base, "repo"),
 		Origin: filepath.Join(base, "origin.git"),
 		home:   filepath.Join(base, "home"),
+		bin:    filepath.Join(base, "bin"),
 	}
-	mkdirAll(t, r.Origin, r.home)
+	mkdirAll(t, r.Origin, r.home, r.bin)
 	r.gitAt(r.Origin, "init", "-q", "-b", "main", "--bare", ".")
 	r.runIn(base, "", "git", "clone", "-q", r.Origin, r.Root)
 	r.commit("README.md", "hello\n", "init")

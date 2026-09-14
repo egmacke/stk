@@ -88,9 +88,15 @@ type PullRequest struct {
 	// Base is the branch the pull request is opened against, which stk keeps
 	// pointing at the stack parent.
 	Base string `json:"baseRefName"`
+	// Head is the branch the pull request proposes, which is how stk matches
+	// a pull request to a local branch.
+	Head string `json:"headRefName"`
 }
 
 // IsMerged reports whether the pull request has already landed.
 func (pr *PullRequest) IsMerged() bool { return pr.State == "MERGED" }
+
+// IsClosed reports whether the pull request was closed without landing.
+func (pr *PullRequest) IsClosed() bool { return pr.State == "CLOSED" }
 
 func (pr *PullRequest) String() string { return fmt.Sprintf("#%d", pr.Number) }

@@ -70,14 +70,15 @@ stk restack
 | `stk up [n]` / `stk down [n]` / `stk top` / `stk bottom` | Navigate the stack |
 | `stk track [branch] [--parent <p>]` | Adopt an existing branch into the graph |
 | `stk untrack [branch]` | Drop metadata; the git branch is never deleted |
-| `stk rename [old] [new]` | Rename without breaking the stack |
+| `stk rename [old] [new]` | Rename without breaking the stack, remote branch included |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
 | `stk fold [branch] [--into <b>\|--stack]` | Collapse stacked branches into one |
 | `stk split [branch] [--at <commit>]` | Divide a branch into several stacked branches |
+| `stk delete [branch...] [-y] [--remote]` | Delete branches, and offer to delete their remote branches |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk submit [branch] [--pull] [--draft] [--stack]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
 | `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
-| `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune, restack |
+| `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune finished branches, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
 | `stk version`, `stk completion <shell>` | Build info and shell completion |
@@ -496,6 +497,94 @@ The tip cannot end a segment (there would be nothing above it), points must
 run in history order, and a name that already exists is refused before
 anything is created. Answering nothing changes nothing.
 
+## Deleting branches
+
+`stk delete` removes local branches and offers to take their remote
+counterparts with them.
+
+```console
+$ stk delete sc-123/api
+Deleting:
+
+    sc-123/api   nothing that main or another branch lacks
+
+sc-123/ui is reparented onto main, and will need a restack.
+
+Delete 1 branch(es)? (Y/n) y
+
+✓ Reparented sc-123/ui onto main
+✓ Deleted sc-123/api (was 2d5cb8f)
+
+These branches also exist on the remote:
+
+    origin/sc-123/api
+
+GitHub closes any open pull request whose head branch is deleted.
+
+Delete 1 remote branch(es) as well? (y/N) y
+✓ Deleted origin/sc-123/api
+```
+
+Every question is answered by `-y`, the remote one included. `--remote` and
+`--no-remote` settle just that half without asking.
+
+Before it asks, `stk` counts what each branch keeps that nothing else does — not
+trunk, and not another branch — and says so. When the answer is not zero the
+prompt defaults to *no*, and afterwards `stk` prints the one command that brings
+the branch back:
+
+```console
+$ stk delete sc-123/spike
+Deleting:
+
+    sc-123/spike   3 commit(s) kept nowhere else
+
+Delete 1 branch(es)? (y/N) y
+
+✓ Deleted sc-123/spike (was 6f46091)
+
+Recover a deleted branch with:
+
+    git branch sc-123/spike 6f46091
+```
+
+Branches stacked above a deleted one are reparented onto the nearest ancestor
+that survives, so the graph keeps its shape; they are left needing a restack
+rather than rewritten here. Trunk is never deleted, and neither is a branch
+checked out in another worktree.
+
+With no argument the current branch is deleted, and `stk` steps down to the
+nearest branch that survives first.
+
+## Renaming a branch
+
+Stack relationships are keyed by stable ids, so a rename leaves parents and
+children exactly where they were. When the branch has been published, `stk`
+offers to move the remote branch with it:
+
+```console
+$ stk rename sc-123/api sc-123/backend
+
+sc-123/api publishes to origin/sc-123/api.
+
+GitHub closes any open pull request whose head branch is deleted, so a pull
+request open for sc-123/api will not survive the rename.
+
+Rename origin/sc-123/api to origin/sc-123/backend as well? (y/N) y
+Renamed:
+    sc-123/api -> sc-123/backend
+    origin/sc-123/api -> origin/sc-123/backend
+```
+
+The new name is pushed and the old one deleted in a single push, and the
+upstream link follows. Say no — or pass `--no-remote` — and the remote branch
+stays where it is, with the two commands to move it by hand printed for you.
+`-y` and `--remote` answer yes without asking. A remote branch already using
+the new name is never overwritten.
+
+Along with `stk delete --remote`, this is the only push outside `stk submit`,
+which is why it is always asked for and never assumed.
+
 ## Status markers
 
 ```text
@@ -651,15 +740,17 @@ strand them: `stk continue` restores them when the restack finishes, and
 paused they live in `refs/stk/autostash/<id>` rather than only in the stash
 reflog, and `stk doctor` reports any that a killed `stk` left behind.
 
-## Merged branches
+## Finished branches
 
-`stk sync` offers to remove branches that add nothing to trunk. Two things
-count as merged, because the forges do both:
+`stk sync` offers to remove the branches you are done with. Four things say a
+branch is finished, and they do not all carry the same weight:
 
-| How it landed | How `stk` sees it |
-| --- | --- |
-| merge or rebase | the branch's commits are ancestors of trunk |
-| **squash** | the commits are not in trunk, but the branch's content is identical to it |
+| Signal | How `stk` sees it | Proof? |
+| --- | --- | --- |
+| merge or rebase | the branch's commits are ancestors of trunk | yes |
+| **squash** | the commits are not in trunk, but the branch's content is identical to it | yes |
+| pull request merged | the forge says it landed | yes |
+| pull request closed, or the remote branch deleted | the remote is done with it | **no** |
 
 The squash case is the one a stacking tool has to get right: GitHub's default
 lands a stack's bottom branch as a single new commit, so ancestry alone shows
@@ -689,13 +780,50 @@ $ stk sync --cleanup
 
 The following branches add nothing to main:
 
-    sc-123/api
+    sc-123/api   already in main
 
 ✓ Reparented sc-123/service onto main
 ✓ Removed sc-123/api
 ```
 
 Branches checked out in a worktree are never deleted, only reported.
+
+The last row is the one with no proof: a closed pull request or a deleted
+remote branch may still leave the local branch as the only copy of its commits.
+Those are listed separately, with what each would take with it, and the prompt
+defaults to *no*:
+
+```console
+$ stk sync
+✓ main fast-forwarded by 2 commit(s)
+Checking pull requests...
+
+The following branches add nothing to main:
+
+    sc-123/api   #41 merged
+
+Remove these 1 local branches? (Y/n) y
+
+The following branches are finished on the remote:
+
+    sc-140/spike   #48 closed, 3 commit(s) kept nowhere else
+
+The remote is done with them, but nothing proves their commits reached main.
+
+Remove these 1 local branches? (y/N) n
+Leaving them in place.
+
+✓ Removed sc-123/api
+```
+
+Reading pull request states costs one `gh pr list` for the whole stack, and
+another only for a branch whose pull request is older than that listing.
+`--no-pulls` skips the forge entirely and works from git alone; a repository
+with no reachable GitHub remote does the same on its own, without failing the
+sync. `--cleanup` answers yes to both lists, `--no-cleanup` skips them.
+
+`stk sync` never pushes, so it never touches a remote branch — deleting one is
+`stk delete --remote`.
 
 ## How the metadata is stored
 
@@ -726,9 +854,12 @@ commits belong to the branch.
 
 - never silently overwrites a diverged trunk;
 - never chooses a stack parent for you;
-- never deletes a branch git cannot prove adds nothing to trunk — either its
-  commits are already in trunk, or its content is identical to trunk's — or,
-  when folding, that its commits live on in the branch that absorbs it;
+- never deletes a branch, in `stk sync` or `stk fold`, without proof its commits
+  live on somewhere else — in trunk by ancestry or by identical content, in the
+  branch a fold absorbs it into, or in a pull request the forge says landed;
+- deletes a branch with no such proof only where you named it — `stk delete`, or
+  the separate `stk sync` list that defaults to *no* — and prints the one
+  command that brings it back;
 - never deletes or rewrites a branch checked out in another worktree;
 - never loses your uncommitted changes: it parks them, puts them back, and
   leaves them in the stash list if they will not reapply (`--no-autostash` to
@@ -737,8 +868,9 @@ commits belong to the branch.
 - never flattens merge commits without `--rebase-merges`;
 - never hides a git conflict;
 - never initialises a repository silently;
-- never pushes unless you run `stk submit`, and never force-pushes without a
-  lease on what it is replacing;
+- never pushes unless you run `stk submit`, or ask `stk rename` or `stk delete`
+  to move or remove a remote branch, and never force-pushes without a lease on
+  what it is replacing;
 - never merges, and never edits a pull request it did not open in that run.
 
 When a restack hits a conflict it stops, tells you exactly what to do, and

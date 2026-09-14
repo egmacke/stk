@@ -444,13 +444,19 @@ func (r *repo) existingPullRequest(number int, head, base, title string) {
 	}
 }
 
-// useGitHubURL points the remote's fetch URL at a GitHub repository while
-// pushes keep going to the local origin, so stk can both push for real and
-// derive a repository name for gh.
+// ghRemoteURL is the repository stk derives a gh --repo argument from.
+const ghRemoteURL = "https://github.com/example/repo.git"
+
+// useGitHubURL makes the remote look like a GitHub repository while every git
+// transfer still goes to the local origin.
+//
+// The configured URL is the GitHub one, which is what stk reads to name the
+// repository for gh; url.<local>.insteadOf redirects the actual fetches and
+// pushes, exactly as a user with a local mirror would.
 func (r *repo) useGitHubURL() {
 	r.t.Helper()
-	r.git("remote", "set-url", "--push", "origin", r.Origin)
-	r.git("remote", "set-url", "origin", "https://github.com/example/repo.git")
+	r.git("config", "url."+r.Origin+".insteadOf", ghRemoteURL)
+	r.git("remote", "set-url", "origin", ghRemoteURL)
 }
 
 // tempBase returns a temporary directory with every symlink resolved.

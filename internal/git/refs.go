@@ -94,6 +94,27 @@ func (repo *Repo) CountCommits(from, to string) int {
 	return n
 }
 
+// CountUniqueCommits returns how many commits are reachable from rev but from
+// none of the other refs.
+//
+// It is how stk answers "what would deleting this branch throw away?" without
+// guessing at a base: the survivors are named outright, and whatever is left is
+// what nothing else holds.
+func (repo *Repo) CountUniqueCommits(rev string, others []string) int {
+	args := []string{"rev-list", "--count", rev}
+	if len(others) > 0 {
+		args = append(args, "--not")
+		args = append(args, others...)
+	}
+	res := repo.R.Run(args...)
+	if !res.OK() {
+		return 0
+	}
+	var n int
+	fmt.Sscanf(res.Out(), "%d", &n)
+	return n
+}
+
 // HasMergeCommits reports whether the range from..to contains a merge.
 func (repo *Repo) HasMergeCommits(from, to string) bool {
 	res := repo.R.Run("rev-list", "--merges", "--max-count=1", from+".."+to)

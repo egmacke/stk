@@ -156,19 +156,33 @@ func listPRs(args []string) {
 	values, _ := flags(args)
 	head := values["head"]
 	wantAll := values["state"] == "all"
+	limit := 30
+	if raw := values["limit"]; raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			fail("bad --limit %q", raw)
+		}
+		limit = n
+	}
 	s := load()
-	for _, pr := range s.PRs {
-		if pr.Head != head {
+	// Without --head this is the bulk listing stk uses to answer for a whole
+	// stack at once. gh returns the newest first, so the stub does too.
+	matched := []pullRequest{}
+	for i := len(s.PRs) - 1; i >= 0; i-- {
+		pr := s.PRs[i]
+		if head != "" && pr.Head != head {
 			continue
 		}
 		if !wantAll && pr.State != "OPEN" {
 			continue
 		}
-		out, _ := json.Marshal([]pullRequest{pr})
-		fmt.Println(string(out))
-		return
+		if len(matched) >= limit {
+			break
+		}
+		matched = append(matched, pr)
 	}
-	fmt.Println("[]")
+	out, _ := json.Marshal(matched)
+	fmt.Println(string(out))
 }
 
 func editPR(args []string) {

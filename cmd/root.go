@@ -111,6 +111,7 @@ func NewRoot() *cobra.Command {
 		newMoveCmd(),
 		newFoldCmd(),
 		newSplitCmd(),
+		newDeleteCmd(),
 		newReadyCmd(),
 		newRestackCmd(),
 		newSubmitCmd(),

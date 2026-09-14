@@ -64,9 +64,15 @@ func (repo *Repo) SetUpstream(branch, remote string) error {
 	return repo.R.Mutate("branch", "--set-upstream-to="+remote+"/"+branch, branch).Error()
 }
 
-// RemoteURL returns the fetch URL configured for a remote.
+// RemoteURL returns the URL configured for a remote.
+//
+// The configured value is read directly rather than through "git remote
+// get-url", which applies url.*.insteadOf rewriting. That rewriting redirects
+// transport — a mirror, a proxy, ssh in place of https — and says nothing about
+// which repository this is. The GitHub CLI reads the configured value too, so
+// reading it here keeps stk naming the same repository gh would.
 func (repo *Repo) RemoteURL(remote string) string {
-	res := repo.R.Run("remote", "get-url", remote)
+	res := repo.R.Run("config", "--get", "remote."+remote+".url")
 	if !res.OK() {
 		return ""
 	}
@@ -113,4 +119,27 @@ func (repo *Repo) CommitBody(rev string) string {
 		return ""
 	}
 	return res.Out()
+}
+
+// DeleteRemoteBranch removes a branch from a remote.
+//
+// A remote branch that is already gone is not an error: the caller asked for
+// it to be absent, and it is.
+func (repo *Repo) DeleteRemoteBranch(remote, branch string) Result {
+	return repo.R.Capture("push", remote, "--delete", branch)
+}
+
+// RemoteRefMissing reports whether a delete was refused only because the
+// remote branch was not there in the first place.
+func RemoteRefMissing(res Result) bool {
+	return strings.Contains(res.Stderr+res.Stdout, "remote ref does not exist")
+}
+
+// RenameRemoteBranch publishes a branch under a new name and removes the old
+// one, in a single push so the two halves cannot drift apart.
+//
+// The new name is recorded as the branch's upstream; the delete refspec has no
+// local counterpart, so it leaves no configuration behind.
+func (repo *Repo) RenameRemoteBranch(remote, oldName, newName string) Result {
+	return repo.R.Capture("push", "--set-upstream", remote, newName, ":"+oldName)
 }

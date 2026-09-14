@@ -9,14 +9,18 @@ import (
 )
 
 func newSyncCmd() *cobra.Command {
-	var stackOnly, noRestack, noCleanup, cleanup bool
+	var stackOnly, noRestack, noCleanup, cleanup, noPulls bool
 	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Fetch, update trunk, prune merged branches and restack",
+		Short: "Fetch, update trunk, prune finished branches and restack",
 		Long: "Fetches the configured remote, fast-forwards trunk when git can prove that\n" +
-			"is safe, offers to delete branches already contained in trunk, and restacks\n" +
-			"what remains. stk sync never pushes.",
+			"is safe, offers to delete the branches that are finished, and restacks what\n" +
+			"remains. stk sync never pushes, and never touches a remote branch.\n\n" +
+			"A branch is finished when trunk already contains it, when its pull request\n" +
+			"landed, or when its pull request was closed or its remote branch deleted.\n" +
+			"The last two carry no proof that the commits live on anywhere else, so they\n" +
+			"are listed with what they would take with them and asked about separately.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cleanup && noCleanup {
@@ -42,6 +46,7 @@ func newSyncCmd() *cobra.Command {
 				StackOnly: stackOnly,
 				Restack:   !noRestack,
 				Cleanup:   mode,
+				NoPulls:   noPulls,
 			})
 			if errors.Is(err, operations.ErrConflict) {
 				return errSilent{err}
@@ -51,8 +56,9 @@ func newSyncCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&stackOnly, "stack", "s", false, "only restack the stack containing the current branch")
 	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "fetch, update trunk and clean up without rewriting branches")
-	cmd.Flags().BoolVar(&noCleanup, "no-cleanup", false, "never delete merged branches")
-	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "delete merged branches without prompting")
+	cmd.Flags().BoolVar(&noCleanup, "no-cleanup", false, "never delete a branch")
+	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "delete finished branches without prompting")
+	cmd.Flags().BoolVar(&noPulls, "no-pulls", false, "work from git alone; never ask the forge about pull requests")
 	stash.register(cmd)
 	return cmd
 }

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"stk/internal/forge"
 	"stk/internal/stack"
 )
 
@@ -26,6 +27,8 @@ type SyncOptions struct {
 	StackOnly bool
 	Restack   bool
 	Cleanup   CleanupMode
+	// NoPulls skips the forge entirely, so cleanup works from git alone.
+	NoPulls bool
 }
 
 // Sync fetches the remote, fast-forwards trunk where that is provably safe,
@@ -191,120 +194,271 @@ func updateTrunk(env *Env) (string, error) {
 	return remoteSHA, nil
 }
 
-// cleanup removes branches git can prove are already contained in trunk.
+// pruneCandidate is a branch stk offers to remove, and the evidence for it.
+type pruneCandidate struct {
+	Branch *stack.Branch
+	// Reason is shown beside the branch name.
+	Reason string
+	// Proven means something outside the branch demonstrably holds its work:
+	// trunk already contains it, or its pull request landed.
+	Proven bool
+}
+
+// prListLimit is how many pull requests stk reads in one call before falling
+// back to asking about a branch directly.
+const prListLimit = 100
+
+// cleanup removes branches that are finished: the ones git can prove are
+// already contained in trunk, and the ones the remote says are done with.
+//
+// The two are kept apart, because only the first carries proof. A branch whose
+// pull request was closed, or whose remote branch someone deleted, may still be
+// the only copy of its commits, so it is listed with what it would take with it
+// and asked about separately.
 func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error {
 	repo := env.Repo
 	if trunkSHA == "" {
 		return nil
 	}
 
-	var safe []*stack.Branch
-	var held []*stack.Branch
+	var candidates []pruneCandidate
+	var unresolved []*stack.Branch
 	for _, b := range g.Tracked {
 		if b.SHA == "" || b.HasProblem() {
 			continue
 		}
 		// Git can prove the branch holds nothing that trunk lacks, so
-		// deleting it discards nothing. Branches checked out in a worktree
-		// are excluded below, which spares freshly created ones.
+		// deleting it discards nothing.
 		//
 		// Ancestry is the plain case. A squash merge is the other one: the
 		// content lands on trunk under a commit of its own, so the branch is
 		// no ancestor of trunk and yet adds nothing to it — identical trees
 		// are the proof, and without this a squash-merged branch would only
 		// be noticed by the next sync, after a restack had emptied it.
-		if !repo.IsAncestor(b.SHA, trunkSHA) && !repo.SameTree(trunkSHA, b.SHA) {
-			continue
+		switch {
+		case repo.IsAncestor(b.SHA, trunkSHA):
+			candidates = append(candidates, pruneCandidate{Branch: b, Reason: "already in " + g.Trunk.Name, Proven: true})
+		case repo.SameTree(trunkSHA, b.SHA):
+			candidates = append(candidates, pruneCandidate{Branch: b, Reason: "squash-merged into " + g.Trunk.Name, Proven: true})
+		case b.Upstream != "" || b.UpstreamGone:
+			// Published at some point, so the remote has an opinion worth
+			// asking for.
+			unresolved = append(unresolved, b)
 		}
-		if b.Worktree != "" {
-			held = append(held, b)
-			continue
-		}
-		safe = append(safe, b)
 	}
+	candidates = append(candidates, remoteFinished(env, unresolved, opts)...)
+
+	// Branches held by a worktree are reported but never touched: their refs
+	// are not stk's to move or delete.
+	var held []pruneCandidate
+	var proven, unproven []pruneCandidate
+	for _, c := range candidates {
+		switch {
+		case c.Branch.Worktree != "":
+			held = append(held, c)
+		case c.Proven:
+			proven = append(proven, c)
+		default:
+			unproven = append(unproven, c)
+		}
+	}
+	sortCandidates(held)
+	sortCandidates(proven)
+	sortCandidates(unproven)
 
 	if len(held) > 0 {
 		env.Out.Printf("")
-		env.Out.Printf("Safe to prune, but currently checked out:")
+		env.Out.Printf("Finished, but currently checked out:")
 		env.Out.Printf("")
-		for _, b := range held {
-			env.Out.Printf("  %s", b.Name)
-			env.Out.Printf("      %s", b.Worktree)
+		for _, c := range held {
+			env.Out.Printf("  %s", c.Branch.Name)
+			env.Out.Printf("      %s", c.Branch.Worktree)
 		}
 	}
-	if len(safe) == 0 {
+	if len(proven) == 0 && len(unproven) == 0 {
 		return nil
 	}
 
-	env.Out.Printf("")
-	env.Out.Printf("The following branches add nothing to %s:", g.Trunk.Name)
-	env.Out.Printf("")
-	for _, b := range safe {
-		env.Out.Printf("    %s", b.Name)
-	}
-	env.Out.Printf("")
-
-	if opts.Cleanup == CleanupAsk {
-		if env.Confirm == nil {
-			env.Out.Printf("Not removing anything; re-run with --cleanup to delete them.")
-			return nil
+	// Counted only for the branches with no proof, because that is the only
+	// list where the number changes the answer. The whole group is treated as
+	// gone, so a branch is not counted as safe merely because another branch
+	// on the same list still holds its commits.
+	keepers := survivingTips(g, branchesOf(unproven))
+	for i, c := range unproven {
+		if n := repo.CountUniqueCommits(c.Branch.SHA, keepers); n > 0 {
+			unproven[i].Reason = fmt.Sprintf("%s, %d commit(s) kept nowhere else", c.Reason, n)
 		}
-		ok, err := env.Confirm(fmt.Sprintf("Remove these %d local branches?", len(safe)), true)
+	}
+
+	var doomed []*stack.Branch
+	couldNotAsk := false
+	for _, group := range []struct {
+		heading string
+		list    []pruneCandidate
+		byline  string
+		def     bool
+	}{
+		{
+			heading: fmt.Sprintf("The following branches add nothing to %s:", g.Trunk.Name),
+			list:    proven,
+			def:     true,
+		},
+		{
+			heading: "The following branches are finished on the remote:",
+			list:    unproven,
+			byline:  "The remote is done with them, but nothing proves their commits reached " + g.Trunk.Name + ".",
+			def:     false,
+		},
+	} {
+		if len(group.list) == 0 {
+			continue
+		}
+		printPruneGroup(env, group.heading, group.byline, group.list)
+		if opts.Cleanup == CleanupAlways {
+			doomed = append(doomed, branchesOf(group.list)...)
+			continue
+		}
+		if env.Confirm == nil {
+			couldNotAsk = true
+			continue
+		}
+		ok, err := env.Confirm(fmt.Sprintf("Remove these %d local branches?", len(group.list)), group.def)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			env.Out.Printf("Leaving them in place.")
-			return nil
+			continue
 		}
+		doomed = append(doomed, branchesOf(group.list)...)
+	}
+
+	if len(doomed) == 0 {
+		if couldNotAsk {
+			env.Out.Printf("Not removing anything; re-run with --cleanup to delete them.")
+		}
+		return nil
 	}
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would remove %d branch(es)", len(safe))
+		env.Out.Printf("(dry-run) would remove %d branch(es)", len(doomed))
 		return nil
 	}
 
-	doomed := map[string]bool{}
-	for _, b := range safe {
-		doomed[b.ID] = true
-	}
-
+	env.Out.Printf("")
 	// Survivors below a pruned branch adopt the nearest ancestor that stays,
 	// so the remaining graph keeps its shape.
-	for _, b := range g.Tracked {
-		if doomed[b.ID] || b.HasProblem() {
-			continue
-		}
-		if b.Parent == nil || !doomed[b.Parent.ID] {
-			continue
-		}
-		ancestor := b.Parent
-		for ancestor != nil && !ancestor.IsTrunk && doomed[ancestor.ID] {
-			ancestor = ancestor.Parent
-		}
-		if ancestor == nil {
-			ancestor = g.Trunk
-		}
-		if err := stack.SetParent(repo, b.Name, parentID(ancestor)); err != nil {
-			return err
-		}
-		env.Out.OK("Reparented %s onto %s", b.Name, ancestor.Name)
+	if err := reparentSurvivors(env, reparented(g, doomed)); err != nil {
+		return err
 	}
-
-	sort.Slice(safe, func(i, j int) bool { return safe[i].Name < safe[j].Name })
-	for _, b := range safe {
-		if err := stack.ClearBase(repo, b.ID); err != nil {
-			return err
-		}
-		// -D is justified: ancestry already proved no unique commits are lost.
-		if err := repo.DeleteBranch(b.Name, true); err != nil {
-			return err
-		}
-		// git removes the branch config section on delete, but clear it
-		// explicitly in case an older git left it behind.
-		if err := stack.ClearMeta(repo, b.Name); err != nil {
+	sort.Slice(doomed, func(i, j int) bool { return doomed[i].Name < doomed[j].Name })
+	for _, b := range doomed {
+		if err := dropBranch(env, b); err != nil {
 			return err
 		}
 		env.Out.OK("Removed %s", b.Name)
 	}
 	return nil
+}
+
+// remoteFinished asks the forge which of the remaining branches are done with:
+// their pull request landed or was closed, or their remote branch is gone.
+//
+// A repository with no reachable GitHub remote simply yields the branches whose
+// remote counterpart has disappeared; stk never fails a sync because a pull
+// request could not be read.
+func remoteFinished(env *Env, branches []*stack.Branch, opts SyncOptions) []pruneCandidate {
+	if len(branches) == 0 {
+		return nil
+	}
+	prs := map[string]*forge.PullRequest{}
+	if !opts.NoPulls && !env.DryRun {
+		prs = pullRequestsFor(env, branches)
+	}
+	var out []pruneCandidate
+	for _, b := range branches {
+		pr := prs[b.Name]
+		switch {
+		case pr != nil && pr.IsMerged():
+			out = append(out, pruneCandidate{Branch: b, Reason: fmt.Sprintf("%s merged", pr), Proven: true})
+		case pr != nil && pr.IsClosed():
+			out = append(out, pruneCandidate{Branch: b, Reason: fmt.Sprintf("%s closed", pr)})
+		case b.UpstreamGone:
+			out = append(out, pruneCandidate{Branch: b, Reason: b.Upstream + " is gone"})
+		}
+	}
+	return out
+}
+
+// pullRequestsFor reads the pull request of each branch, newest first.
+//
+// One listing answers for a whole stack; only a branch whose pull request is
+// older than that listing costs a call of its own. Nothing here is fatal: a
+// forge stk cannot reach just means fewer branches are offered for removal.
+func pullRequestsFor(env *Env, branches []*stack.Branch) map[string]*forge.PullRequest {
+	out := map[string]*forge.PullRequest{}
+	remote := env.Cfg.Remote
+	if remote == "" || !env.Repo.RemoteExists(remote) {
+		return out
+	}
+	// openForge already proves gh is installed and logged in; a repository
+	// where it is not simply yields no pull requests.
+	gh, err := openForge(env, remote)
+	if err != nil {
+		return out
+	}
+	env.Out.Printf("Checking pull requests...")
+	list, err := gh.ListPullRequests(prListLimit)
+	if err != nil {
+		env.Out.Warnf("Could not read pull requests: %v", err)
+		return out
+	}
+	for i := range list {
+		// Newest first, so the first entry for a head is the current one.
+		if _, seen := out[list[i].Head]; !seen {
+			out[list[i].Head] = &list[i]
+		}
+	}
+	for _, b := range branches {
+		if _, ok := out[b.Name]; ok {
+			continue
+		}
+		pr, err := gh.LatestPullRequest(b.Name)
+		if err != nil || pr == nil {
+			continue
+		}
+		out[b.Name] = pr
+	}
+	return out
+}
+
+func printPruneGroup(env *Env, heading, byline string, list []pruneCandidate) {
+	env.Out.Printf("")
+	env.Out.Printf("%s", heading)
+	env.Out.Printf("")
+	width := 0
+	for _, c := range list {
+		if len(c.Branch.Name) > width {
+			width = len(c.Branch.Name)
+		}
+	}
+	for _, c := range list {
+		env.Out.Printf("    %-*s   %s", width, c.Branch.Name, c.Reason)
+	}
+	env.Out.Printf("")
+	if byline != "" {
+		env.Out.Printf("%s", byline)
+		env.Out.Printf("")
+	}
+}
+
+func sortCandidates(list []pruneCandidate) {
+	sort.Slice(list, func(i, j int) bool { return list[i].Branch.Name < list[j].Branch.Name })
+}
+
+func branchesOf(list []pruneCandidate) []*stack.Branch {
+	out := make([]*stack.Branch, 0, len(list))
+	for _, c := range list {
+		out = append(out, c.Branch)
+	}
+	return out
 }

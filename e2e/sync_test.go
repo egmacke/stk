@@ -249,3 +249,126 @@ func TestSyncRefusesDirtyWorktreeWithNoAutostash(t *testing.T) {
 	out := r.stkFail("--no-interactive", "sync", "--no-autostash")
 	requireContains(t, out, "uncommitted changes")
 }
+
+// publishedBranch creates a tracked branch with one commit and pushes it.
+func publishedBranch(r *repo, name string) {
+	r.t.Helper()
+	r.stk("create", name)
+	r.commit(name+".txt", name+"\n", name+" work")
+	r.git("push", "-q", "-u", "origin", name)
+	r.stk("checkout", "main")
+}
+
+func TestSyncOffersToRemoveABranchWhoseRemoteIsGone(t *testing.T) {
+	r := newRepoWithRemote(t)
+	publishedBranch(r, "api")
+	// Somebody merged and deleted the branch on the remote.
+	r.git("push", "-q", "origin", "--delete", "api")
+
+	res := r.stkAt(r.Root, "y\n", "--interactive", "sync", "--no-restack")
+	requireEqual(t, res.Code, 0, "exit code")
+	requireContains(t, res.All(), "The following branches are finished on the remote:")
+	requireContains(t, res.All(), "origin/api is gone, 1 commit(s) kept nowhere else")
+	requireContains(t, res.All(), "nothing proves their commits reached main")
+	requireContains(t, res.All(), "Removed api")
+	requireEqual(t, r.branchExists("api"), false, "the branch was removed")
+}
+
+func TestSyncKeepsABranchWhoseRemoteIsGoneWhenDeclined(t *testing.T) {
+	r := newRepoWithRemote(t)
+	publishedBranch(r, "api")
+	r.git("push", "-q", "origin", "--delete", "api")
+
+	res := r.stkAt(r.Root, "n\n", "--interactive", "sync", "--no-restack")
+	requireEqual(t, res.Code, 0, "exit code")
+	requireContains(t, res.All(), "Leaving them in place.")
+	requireEqual(t, r.branchExists("api"), true, "the branch survives a no")
+}
+
+func TestSyncDefaultsToKeepingABranchWithNoProof(t *testing.T) {
+	r := newRepoWithRemote(t)
+	publishedBranch(r, "api")
+	r.git("push", "-q", "origin", "--delete", "api")
+
+	// An empty answer takes the default, which for an unproven branch is no.
+	res := r.stkAt(r.Root, "\n", "--interactive", "sync", "--no-restack")
+	requireEqual(t, res.Code, 0, "exit code")
+	requireContains(t, res.All(), "Remove these 1 local branches? (y/N)")
+	requireEqual(t, r.branchExists("api"), true, "the default kept the branch")
+}
+
+func TestSyncRemovesABranchWhosePullRequestMerged(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	publishedBranch(r, "api")
+	r.mergedPullRequest(1, "api", "main", "Add api")
+
+	out := r.stk("--no-interactive", "sync", "--cleanup", "--no-restack")
+	requireContains(t, out, "Checking pull requests...")
+	requireContains(t, out, "The following branches add nothing to main:")
+	requireContains(t, out, "#1 merged")
+	requireContains(t, out, "Removed api")
+	requireEqual(t, r.branchExists("api"), false, "the merged branch is gone")
+}
+
+func TestSyncAsksAboutABranchWhosePullRequestClosed(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	publishedBranch(r, "api")
+	r.existingPullRequest(1, "api", "main", "Add api")
+	r.setPullRequestState(1, "CLOSED")
+
+	res := r.stkAt(r.Root, "y\n", "--interactive", "sync", "--no-restack")
+	requireEqual(t, res.Code, 0, "exit code")
+	requireContains(t, res.All(), "The following branches are finished on the remote:")
+	requireContains(t, res.All(), "#1 closed, 1 commit(s) kept nowhere else")
+	requireContains(t, res.All(), "Removed api")
+	requireEqual(t, r.branchExists("api"), false, "the closed branch is gone")
+}
+
+func TestSyncSeparatesProvenBranchesFromUnprovenOnes(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	publishedBranch(r, "landed")
+	publishedBranch(r, "abandoned")
+	r.existingPullRequest(1, "abandoned", "main", "Abandoned")
+	r.setPullRequestState(1, "CLOSED")
+	// landed really is in trunk, so git alone can prove it.
+	r.git("push", "-q", "origin", "landed:main")
+
+	// Yes to the proven list, no to the unproven one.
+	res := r.stkAt(r.Root, "y\nn\n", "--interactive", "sync", "--no-restack")
+	requireEqual(t, res.Code, 0, "exit code")
+	requireContains(t, res.All(), "landed   already in main")
+	requireContains(t, res.All(), "abandoned   #1 closed")
+	requireEqual(t, r.branchExists("landed"), false, "the merged branch is gone")
+	requireEqual(t, r.branchExists("abandoned"), true, "the closed branch was kept")
+}
+
+func TestSyncNoPullsNeverAsksTheForge(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	publishedBranch(r, "api")
+	r.mergedPullRequest(1, "api", "main", "Add api")
+
+	out := r.stk("--no-interactive", "sync", "--cleanup", "--no-pulls", "--no-restack")
+	requireNotContains(t, out, "Checking pull requests...")
+	requireEqual(t, r.ghCallLog(), "", "no gh call was made")
+	requireEqual(t, r.branchExists("api"), true, "nothing was removed without the forge")
+}
+
+func TestSyncNeverDeletesARemoteBranch(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	publishedBranch(r, "api")
+	r.mergedPullRequest(1, "api", "main", "Add api")
+
+	r.stk("--no-interactive", "sync", "--cleanup", "--no-restack")
+	requireEqual(t, r.branchExists("api"), false, "the local branch went")
+	requireContains(t, r.git("ls-remote", "--heads", "origin"), "refs/heads/api")
+}

@@ -102,7 +102,7 @@ func (g *GH) exec(full ...string) (string, error) {
 }
 
 // prFields are the pull request fields stk reads.
-const prFields = "number,url,title,isDraft,state,baseRefName"
+const prFields = "number,url,title,isDraft,state,baseRefName,headRefName"
 
 // OpenPullRequest returns the open pull request whose head is branch, or nil
 // when there is none.
@@ -138,13 +138,38 @@ func (g *GH) pullRequest(branch, state string) (*PullRequest, error) {
 	return &prs[0], nil
 }
 
+// ListPullRequests returns the most recent pull requests of the repository,
+// whatever their state, newest first.
+//
+// One call answers "has this branch been merged or closed?" for a whole stack,
+// where asking per branch would be one round trip each. A branch whose pull
+// request is older than the limit simply does not appear, and the caller falls
+// back to a direct query for it.
+func (g *GH) ListPullRequests(limit int) ([]PullRequest, error) {
+	out, err := g.run("pr", "list",
+		"--state", "all",
+		"--limit", fmt.Sprintf("%d", limit),
+		"--json", prFields)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	var prs []PullRequest
+	if err := json.Unmarshal([]byte(out), &prs); err != nil {
+		return nil, fmt.Errorf("reading gh pr list output: %w", err)
+	}
+	return prs, nil
+}
+
 // PullRequestByNumber reads one pull request by number, whatever its state.
 //
 // It goes through REST because stk needs it for pull requests whose branch is
 // gone, which "gh pr list --head" can no longer find.
 func (g *GH) PullRequestByNumber(number int) (*PullRequest, error) {
 	out, err := g.api("GET", g.apiPath("/pulls/%d", number),
-		"--jq", `{number: .number, url: .html_url, title: .title, isDraft: .draft, baseRefName: .base.ref, state: (if .merged then "MERGED" else (.state | ascii_upcase) end)}`)
+		"--jq", `{number: .number, url: .html_url, title: .title, isDraft: .draft, baseRefName: .base.ref, headRefName: .head.ref, state: (if .merged then "MERGED" else (.state | ascii_upcase) end)}`)
 	if err != nil {
 		return nil, err
 	}

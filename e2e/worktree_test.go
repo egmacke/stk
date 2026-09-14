@@ -147,7 +147,7 @@ func TestSyncNeverDeletesACheckedOutBranch(t *testing.T) {
 	r.addWorktree("wt-merged", "merged")
 
 	out := r.stk("--no-interactive", "sync", "--cleanup", "--no-restack")
-	requireContains(t, out, "Safe to prune, but currently checked out:")
+	requireContains(t, out, "Finished, but currently checked out:")
 	requireContains(t, out, "merged")
 	if !r.branchExists("merged") {
 		t.Fatal("a checked-out branch was deleted")

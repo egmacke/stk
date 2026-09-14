@@ -189,6 +189,61 @@ func TestRestackRefusesDirtyWorktreeWithNoAutostash(t *testing.T) {
 	requireEqual(t, r.fileContent("a.txt"), "dirty\n", "refusing to run changes nothing")
 }
 
+func TestRestackDropsSquashMergedCommits(t *testing.T) {
+	r := newRepo(t)
+	buildStack(r, "api", "service")
+	// Two commits on api, so the squash cannot be recognised by patch id.
+	r.stk("checkout", "api")
+	r.commit("api2.txt", "more api\n", "more api")
+	r.stk("restack")
+	r.stk("checkout", "service")
+
+	// The squash merge: api's content lands on main under one new commit.
+	r.stk("checkout", "main")
+	r.git("merge", "-q", "--squash", "api")
+	r.git("commit", "-q", "-m", "Add api (#1)")
+	r.stk("checkout", "service")
+
+	// Replaying api's commits onto their own merged result would conflict; stk
+	// recognises the merge instead.
+	out := r.stk("restack")
+	requireContains(t, out, "api is already in main; its own commits went in with the merge")
+	requireContains(t, out, "✓ service")
+	requireNotContains(t, out, "Conflict")
+	// One line about it, not two.
+	requireNotContains(t, out, "✓ api\n")
+
+	requireEqual(t, r.sha("api"), r.sha("main"), "api collapsed onto trunk")
+	requireEqual(t, r.log("service")[0], "service", "service kept its own commit")
+	requireEqual(t, r.log("service")[1], "Add api (#1)", "service sits on the squashed commit")
+	requireEqual(t, r.baseOf("service"), r.sha("main"), "service's base caught up")
+
+	// Now that it is plainly contained, cleanup can take it away.
+	out = r.stk("--no-interactive", "sync", "--no-restack", "--cleanup")
+	requireContains(t, out, "Removed api")
+	requireEqual(t, r.parentOf("service"), "main", "service was reparented")
+}
+
+func TestRestackDropsSquashMergedCommitsOnTheCurrentBranch(t *testing.T) {
+	r := newRepo(t)
+	buildStack(r, "api")
+	r.stk("checkout", "api")
+	r.commit("api2.txt", "more api\n", "more api")
+
+	r.stk("checkout", "main")
+	r.git("merge", "-q", "--squash", "api")
+	r.git("commit", "-q", "-m", "Add api (#1)")
+	r.stk("checkout", "api")
+
+	// The branch being collapsed is the one checked out, so the working tree
+	// has to move with it.
+	out := r.stk("restack")
+	requireContains(t, out, "api is already in main")
+	requireEqual(t, r.sha("api"), r.sha("main"), "api collapsed onto trunk")
+	requireEqual(t, r.currentBranch(), "api", "still on the same branch")
+	requireEqual(t, r.git("status", "--porcelain"), "", "the working tree came with it")
+}
+
 func TestRestackDryRunChangesNothing(t *testing.T) {
 	r := newRepo(t)
 	buildStack(r, "api", "service", "ui")

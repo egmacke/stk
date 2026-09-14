@@ -26,6 +26,37 @@ func TestCheckoutFetchesAnUnseenRemoteBranch(t *testing.T) {
 	requireEqual(t, r.git("rev-parse", "--abbrev-ref", "colleague@{upstream}"),
 		"origin/colleague", "upstream of the new branch")
 	requireEqual(t, r.tracked("colleague"), false, "a fetched branch is not tracked by stk")
+	requireContains(t, out, "stk track colleague --parent <branch>")
+}
+
+func TestCheckoutOffersToTrackAFetchedBranch(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.pushRemoteBranch(r.upstreamClone(), "colleague", "their work")
+
+	out := r.stkStdin("y\nmain\n", "--interactive", "checkout", "colleague")
+	requireContains(t, out, "Track colleague in the stack?")
+	requireContains(t, out, "Parent of colleague:")
+	requireEqual(t, r.parentOf("colleague"), "main", "parent chosen at the prompt")
+}
+
+func TestCheckoutTrackOfferCanBeDeclined(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.pushRemoteBranch(r.upstreamClone(), "colleague", "their work")
+
+	out := r.stkStdin("n\n", "--interactive", "checkout", "colleague")
+	requireContains(t, out, "Track colleague in the stack?")
+	requireEqual(t, r.currentBranch(), "colleague", "checked out branch")
+	requireEqual(t, r.tracked("colleague"), false, "declining leaves the branch untracked")
+}
+
+func TestCheckoutOfALocalBranchDoesNotOfferToTrack(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.git("switch", "-q", "-c", "loose")
+	r.git("switch", "-q", "main")
+
+	out := r.stkStdin("", "--interactive", "checkout", "loose")
+	requireNotContains(t, out, "Track loose in the stack?")
+	requireEqual(t, r.currentBranch(), "loose", "checked out branch")
 }
 
 func TestCheckoutOfAFetchedRemoteBranchSkipsTheFetch(t *testing.T) {

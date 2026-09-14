@@ -64,12 +64,62 @@ func checkoutRemote(a *app, name string) error {
 		return err
 	}
 	if found {
-		return nil
+		return offerToTrack(a, name)
 	}
 	if remote := a.Cfg.Remote; remote != "" && a.Repo.RemoteExists(remote) {
 		return fmt.Errorf("branch %q does not exist locally or on %s", name, remote)
 	}
 	return fmt.Errorf("branch %q does not exist", name)
+}
+
+// offerToTrack asks whether a branch stk has just brought down from the remote
+// belongs in the stack, since the person who pushed it stacked it somewhere stk
+// cannot see.
+//
+// Declining is free: the branch stays an ordinary git branch, and stk track
+// says the same thing later.
+func offerToTrack(a *app, name string) error {
+	if globals.dryRun {
+		return nil
+	}
+	// The graph was built before the branch existed.
+	if err := a.reload(); err != nil {
+		return err
+	}
+	b, ok := a.Graph.Resolve(name)
+	if !ok {
+		return nil
+	}
+	a.Out.Printf("")
+	if !Interactive() {
+		a.Out.Printf("%s is not tracked by stk. To stack on it:", name)
+		a.Out.Printf("")
+		a.Out.Printf("    stk track %s --parent <branch>", name)
+		return nil
+	}
+	yes, err := ui.Confirm(fmt.Sprintf("Track %s in the stack?", name), true)
+	if cancelled(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !yes {
+		return nil
+	}
+	parent, err := promptBranch(a.Graph, branchPrompt{
+		Title:      fmt.Sprintf("Parent of %s", name),
+		Candidates: parentCandidates(a.Graph, b),
+		Missing:    "--parent is required; stk will not guess a stack parent",
+		Empty:      fmt.Sprintf("no branch can be the parent of %s", name),
+	})
+	if cancelled(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return operations.Track(a.Env, a.Graph, name, parent)
 }
 
 // switchTo checks out a branch, explaining git's worktree restriction rather

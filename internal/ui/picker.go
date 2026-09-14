@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/egmacke/stk/internal/output"
 	"github.com/egmacke/stk/internal/stack"
@@ -188,60 +188,57 @@ func (m *pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.height = msg.Height
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
 			m.quitting = true
 			return m, tea.Quit
-		case tea.KeyEnter:
+		case "enter":
 			if !m.opts.ReadOnly && m.cursor < len(m.rows) && m.rows[m.cursor].Branch != nil {
 				m.chosen = m.rows[m.cursor].Branch
 			}
 			m.quitting = true
 			return m, tea.Quit
-		case tea.KeyUp:
+		case "up":
 			m.move(-1)
-		case tea.KeyDown:
+		case "down":
 			m.move(1)
-		case tea.KeyPgUp:
+		case "pgup":
 			for i := 0; i < 10; i++ {
 				m.move(-1)
 			}
-		case tea.KeyPgDown:
+		case "pgdown":
 			for i := 0; i < 10; i++ {
 				m.move(1)
 			}
-		case tea.KeyBackspace:
+		case "backspace":
 			if m.filter != "" {
 				r := []rune(m.filter)
 				m.filter = string(r[:len(r)-1])
 				m.rebuild()
 			}
-		case tea.KeyRunes, tea.KeySpace:
-			switch msg.String() {
-			case "ctrl+p":
-				m.move(-1)
-			case "ctrl+n":
-				m.move(1)
-			default:
-				m.filter += msg.String()
-				m.rebuild()
-			}
-		case tea.KeyCtrlP:
+		case "ctrl+p":
 			m.move(-1)
-		case tea.KeyCtrlN:
+		case "ctrl+n":
 			m.move(1)
-		case tea.KeyCtrlU:
+		case "ctrl+u":
 			m.filter = ""
 			m.rebuild()
+		default:
+			// Text is non-empty only for printable keys, which keeps
+			// modifier chords and function keys out of the filter.
+			if msg.Text != "" {
+				m.filter += msg.Text
+				m.rebuild()
+			}
 		}
 	}
 	return m, nil
 }
 
-func (m *pickerModel) View() string {
+func (m *pickerModel) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 	var b strings.Builder
 	title := m.opts.Title
@@ -292,5 +289,5 @@ func (m *pickerModel) View() string {
 		fmt.Fprintf(&b, "%s %s   %s %s\n",
 			output.Bold("enter"), output.Dim(verb), output.Bold("esc"), output.Dim("cancel"))
 	}
-	return b.String()
+	return tea.NewView(b.String())
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"stk/internal/config"
+	"stk/internal/forge"
 	"stk/internal/git"
 	"stk/internal/operations"
 	"stk/internal/output"
@@ -139,6 +140,19 @@ func runDoctor() doctorReport {
 		add("remote exists", statusOK, cfg.Remote)
 	default:
 		add("remote exists", statusFail, "remote %q is not configured", cfg.Remote)
+	}
+	if cfg.GitHubStacks {
+		// A warning, not a failure: it only matters to stk submit --pull, and
+		// pushing and restacking are unaffected.
+		gh := &forge.GH{Dir: repo.Root}
+		switch {
+		case gh.Available() != nil:
+			add("GitHub stacks", statusWarn, "%s is on but the GitHub CLI is not installed", config.KeyGitHubStacks)
+		case gh.HasStackExtension() != nil:
+			add("GitHub stacks", statusWarn, "%s is on but the gh stack extension is not installed (gh extension install github/gh-stack)", config.KeyGitHubStacks)
+		default:
+			add("GitHub stacks", statusOK, "gh stack is installed")
+		}
 	}
 
 	g, err := stack.Load(repo, cfg)

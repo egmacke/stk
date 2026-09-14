@@ -26,6 +26,8 @@ type SubmitOptions struct {
 	// opens one, so a restacked stack can be republished without proposing
 	// work that is not ready to be looked at.
 	UpdateOnly bool
+	// NoLink leaves the stack on GitHub alone when stk.githubStacks is on.
+	NoLink bool
 }
 
 // PullRequestText is how the command layer collects a title and body. The
@@ -61,6 +63,11 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	if opts.Pull {
 		if gh, err = openForge(env, remote); err != nil {
 			return err
+		}
+		if env.Cfg.GitHubStacks && !opts.NoLink && target.Tracked {
+			if err := requireStackExtension(gh); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -132,10 +139,21 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	}
 
 	commented := 0
-	if opts.Pull && !opts.NoComment && target.Tracked {
-		// Last, so the note describes the stack as it now stands rather than
-		// as it was when the run started.
-		if commented, err = syncStackComments(env, gh, g, target, prs); err != nil {
+	stacked := false
+	if opts.Pull && target.Tracked {
+		// Last, so the record describes the stack as it now stands rather
+		// than as it was when the run started. GitHub itself shows a linked
+		// stack on every one of its pull requests, so with stk.githubStacks on
+		// the comment would only say the same thing twice.
+		switch {
+		case env.Cfg.GitHubStacks:
+			if !opts.NoLink {
+				stacked, err = linkGitHubStack(env, gh, target, prs)
+			}
+		case !opts.NoComment:
+			commented, err = syncStackComments(env, gh, g, target, prs)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -154,6 +172,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		commented:  commented,
 		refreshed:  refreshed,
 		retargeted: retargeted,
+		stacked:    stacked,
 	}, opts))
 	return nil
 }
@@ -515,6 +534,7 @@ type submitCounts struct {
 	refreshed  int
 	retargeted int
 	commented  int
+	stacked    bool
 }
 
 // submitSummary closes the run. A dry run reports in the conditional, because
@@ -548,6 +568,13 @@ func submitSummary(env *Env, c submitCounts, opts SubmitOptions) string {
 			what = "stack comment(s) would be written"
 		}
 		parts = append(parts, fmt.Sprintf("%d %s", c.commented, what))
+	}
+	if c.stacked {
+		what := "linked as a stack on GitHub"
+		if env.DryRun {
+			what = "would be linked as a stack on GitHub"
+		}
+		parts = append(parts, what)
 	}
 	if accounted := c.pushed + c.linked; c.planned > accounted && accounted > 0 {
 		parts = append(parts, fmt.Sprintf("%d already up to date", c.planned-accounted))

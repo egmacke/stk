@@ -32,11 +32,19 @@ type comment struct {
 	Login string `json:"login"`
 }
 
+// ghStack is one stack linked through gh stack link.
+type ghStack struct {
+	Base   string `json:"base"`
+	Remote string `json:"remote"`
+	PRs    []int  `json:"prs"`
+}
+
 type state struct {
 	NextPR      int                  `json:"nextPr"`
 	NextComment int64                `json:"nextComment"`
 	PRs         []pullRequest        `json:"prs"`
 	Comments    map[string][]comment `json:"comments"`
+	Stacks      []ghStack            `json:"stacks"`
 }
 
 func statePath() string {
@@ -133,6 +141,10 @@ func main() {
 		closePR(args[2:])
 	case "pr edit":
 		editPR(args[2:])
+	case "extension list":
+		listExtensions()
+	case "stack link":
+		linkStack(args[2:])
 	default:
 		if args[0] == "api" {
 			api(args[1:])
@@ -150,6 +162,98 @@ func authStatus() {
 		}
 	}
 	fmt.Println("Logged in to github.com account tester")
+}
+
+// flagged reports whether the file named by an environment variable exists,
+// which is how a test flips one of the stub's behaviours.
+func flagged(env string) bool {
+	path := os.Getenv(env)
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// listExtensions answers gh extension list in gh's tab-separated shape. The
+// stack extension is installed unless a test says otherwise.
+func listExtensions() {
+	if flagged("GH_NO_STACK_EXTENSION") {
+		return
+	}
+	fmt.Println("gh stack\tgithub/gh-stack\tv1.0.0")
+}
+
+// linkStack answers gh stack link <numbers...>: every argument stk passes is
+// a pull request number, and pull requests already in a stack extend that
+// stack rather than starting another.
+func linkStack(args []string) {
+	if flagged("GH_NO_STACKS") {
+		fmt.Fprintln(os.Stderr, "✗ Stacked pull requests are not available for this repository")
+		os.Exit(9)
+	}
+	values, _ := flags(args)
+	if values["base"] == "" {
+		fail("stack link without --base")
+	}
+	if values["remote"] == "" {
+		fail("stack link without --remote")
+	}
+	var numbers []int
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			i++ // skip the value
+			continue
+		}
+		n, err := strconv.Atoi(args[i])
+		if err != nil {
+			fail("stack link with a branch name %q; stk should pass pull request numbers", args[i])
+		}
+		numbers = append(numbers, n)
+	}
+	if len(numbers) < 2 {
+		fail("stack link needs at least two pull requests")
+	}
+	s := load()
+	known := map[int]bool{}
+	for _, pr := range s.PRs {
+		known[pr.Number] = true
+	}
+	for _, n := range numbers {
+		if !known[n] {
+			fail("no pull request %d", n)
+		}
+	}
+	for i := range s.Stacks {
+		for _, have := range s.Stacks[i].PRs {
+			for _, n := range numbers {
+				if have != n {
+					continue
+				}
+				// Additive only, as the real thing is.
+				for _, n := range numbers {
+					if !contains(s.Stacks[i].PRs, n) {
+						s.Stacks[i].PRs = append(s.Stacks[i].PRs, n)
+					}
+				}
+				s.save()
+				fmt.Fprintf(os.Stderr, "Updated stack to %d PRs\n", len(s.Stacks[i].PRs))
+				return
+			}
+		}
+	}
+	s.Stacks = append(s.Stacks, ghStack{Base: values["base"], Remote: values["remote"], PRs: numbers})
+	s.save()
+	fmt.Fprintf(os.Stderr, "Created stack with %d PRs\n", len(numbers))
+}
+
+func contains(list []int, n int) bool {
+	for _, have := range list {
+		if have == n {
+			return true
+		}
+	}
+	return false
 }
 
 func listPRs(args []string) {

@@ -69,6 +69,8 @@ func (r *repo) env() []string {
 		"GH_CALLS="+r.ghCalls(),
 		"GH_STATE="+r.ghState(),
 		"GH_UNAUTHENTICATED="+r.ghUnauthenticated(),
+		"GH_NO_STACK_EXTENSION="+r.ghNoStackExtension(),
+		"GH_NO_STACKS="+r.ghNoStacks(),
 		"HOME="+r.home,
 		"XDG_CONFIG_HOME="+filepath.Join(r.home, "config"),
 		"GIT_CONFIG_GLOBAL="+filepath.Join(r.home, "gitconfig"),
@@ -264,6 +266,39 @@ func (r *repo) ghState() string { return filepath.Join(r.bin, "gh-state.json") }
 // ghUnauthenticated is the file whose presence makes the stub gh refuse.
 func (r *repo) ghUnauthenticated() string { return filepath.Join(r.bin, "gh-logged-out") }
 
+// ghNoStackExtension is the file whose presence makes the stub gh report that
+// the stack extension is not installed.
+func (r *repo) ghNoStackExtension() string { return filepath.Join(r.bin, "gh-no-stack-extension") }
+
+// ghNoStacks is the file whose presence makes the stub gh stack link report
+// that the repository has no stacked pull requests.
+func (r *repo) ghNoStacks() string { return filepath.Join(r.bin, "gh-no-stacks") }
+
+// enableGitHubStacks turns on the repository preference for linking stacks on
+// GitHub, the way a user would.
+func (r *repo) enableGitHubStacks() {
+	r.t.Helper()
+	r.git("config", "stk.githubStacks", "true")
+}
+
+// removeGHStackExtension makes the stub gh report that gh stack is not
+// installed.
+func (r *repo) removeGHStackExtension() {
+	r.t.Helper()
+	if err := os.WriteFile(r.ghNoStackExtension(), nil, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// disableGHStacks makes the stub gh stack link fail the way the real one does
+// for a repository without stacked pull requests.
+func (r *repo) disableGHStacks() {
+	r.t.Helper()
+	if err := os.WriteFile(r.ghNoStacks(), nil, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
 // stubGH puts the fake GitHub CLI on PATH.
 func (r *repo) stubGH() {
 	r.t.Helper()
@@ -309,6 +344,11 @@ type ghStubState struct {
 		Body  string `json:"body"`
 		Login string `json:"login"`
 	} `json:"comments"`
+	Stacks []struct {
+		Base   string `json:"base"`
+		Remote string `json:"remote"`
+		PRs    []int  `json:"prs"`
+	} `json:"stacks"`
 }
 
 func (r *repo) ghStubState() ghStubState {

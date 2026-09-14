@@ -14,7 +14,9 @@ plain git. You can stop using `stk` at any moment and carry on with git alone.
 There is no hosted service, no account, no stored token, no PR or CI status
 tracking and no background daemon. `git` is the only dependency; `stk submit
 --pull` shells out to the [GitHub CLI](https://cli.github.com) to open a pull
-request when you ask it to, and everything else works with no forge at all.
+request when you ask it to — and, if you opt in, to
+[`gh stack`](https://github.com/github/gh-stack) to link those pull requests
+as a stack on GitHub — and everything else works with no forge at all.
 
 ## Install
 
@@ -200,6 +202,7 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
 | `--no-comment` | | leave the stack comment on each pull request alone |
+| `--no-link` | | with `stk.githubStacks`, leave the stack on GitHub alone |
 
 Every draft flag implies `--pull`, and they are mutually exclusive — there is
 never a question of which one wins.
@@ -383,6 +386,58 @@ Log in with:
 
 Nothing about a pull request is stored in the repository — `stk` keeps no PR
 numbers, no status and no token.
+
+### GitHub stacks
+
+GitHub can hold the shape of a stack itself: a *stack* of pull requests, shown
+on every one of them, managed with the
+[`gh stack`](https://github.com/github/gh-stack) extension. `stk` can publish
+into it instead of writing the stack comment. It is opt-in, per repository:
+
+```bash
+gh extension install github/gh-stack
+git config stk.githubStacks true
+```
+
+From then on `stk submit --pull` ends by linking the pull requests of the stack,
+bottom first, through `gh stack link`, and writes no comment — GitHub already
+shows the stack on each pull request, so a comment would say the same thing
+twice:
+
+```console
+$ stk ss -pn
+✓ Pushed sc-123/api to origin (created)
+✓ Opened pull request #1 for sc-123/api onto main
+✓ Pushed sc-123/service to origin (created)
+✓ Opened pull request #2 for sc-123/service onto sc-123/api
+✓ Linked #1, #2 as a stack on GitHub
+
+2 branch(es) pushed, 2 pull request(s) opened, linked as a stack on GitHub.
+```
+
+The link is made by pull request **number**, never by branch name, so
+`gh stack link` neither pushes nor opens anything: `stk` has already done both,
+its own way, with its own lease. Everything else about `stk` is unchanged. The
+stack graph stays in your repository, `stk restack`, `stk sync` and navigation
+never call `gh stack`, and `gh stack` keeps no local state of its own that could
+disagree with `stk`'s.
+
+A GitHub stack is strictly linear. `stk`'s graph need not be, so what gets
+linked is the chain through the branch being submitted: everything below it,
+and above it only while each branch has exactly one child. Siblings are a stack
+of their own. The chain also stops below a branch with no pull request — one
+that adds no commits, say — because linking across that gap would have
+`gh stack` retarget the pull request above it onto the branch below, changing
+what its reviewer is looking at. A stack of one pull request is not linked, as
+it is not commented on.
+
+That the extension is installed is checked **before the first push**, like the
+login, so a run never publishes a stack it then cannot link. A repository
+without stacked pull requests enabled is reported by `gh stack` after the pull
+requests are open, and `stk` says so plainly — the pushes and pull requests
+stand, only the link is missing — along with how to go back to the comment.
+`--no-link` skips the link for one run; `stk doctor` reports a repository that
+has opted in without the extension to back it.
 
 ## Folding a stack
 
@@ -646,7 +701,7 @@ stk create api -fmain  # --from main, value attached
 ```
 
 `--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
-`--autostash`, `--no-autostash`, `--no-comment`, `--draft-from`,
+`--autostash`, `--no-autostash`, `--no-comment`, `--no-link`, `--draft-from`,
 `--draft-branch`, `--undo`, `--into`, `--close-pulls` and `--rebase-merges`
 have none: a slipped letter
 should not disable a safety, delete a branch, move someone's uncommitted work
@@ -851,7 +906,7 @@ Everything lives inside the repository and is shared by every worktree:
 
 | State | Where |
 | --- | --- |
-| trunk, default remote, autostash preference, metadata version | `stk.*` in the repository git config |
+| trunk, default remote, autostash and GitHub stacks preferences, metadata version | `stk.*` in the repository git config |
 | branch identity and logical parent | `branch.<name>.stk-id` / `.stk-parent` |
 | protected base commits | `refs/stk/base/<branch-id>` |
 | operation snapshots | `refs/stk/snapshot/<op-id>/<branch-id>` |

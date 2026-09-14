@@ -13,7 +13,7 @@ import (
 )
 
 func newSubmitCmd() *cobra.Command {
-	var pull, draft, noPrompt, wholeStack, noComment, updateOnly bool
+	var pull, draft, noPrompt, wholeStack, noComment, updateOnly, noLink bool
 	var draftFrom string
 	var draftBranches []string
 	cmd := &cobra.Command{
@@ -30,7 +30,9 @@ func newSubmitCmd() *cobra.Command {
 			"branch that is not there. A pull request that is already open is left\n" +
 			"exactly as it is.\n\n" +
 			"Each pull request of the stack carries one stk comment listing the whole\n" +
-			"chain in order, rewritten in place as the stack changes.\n\n" +
+			"chain in order, rewritten in place as the stack changes. With\n" +
+			"stk.githubStacks = true the pull requests are instead linked as a stack on\n" +
+			"GitHub itself, through the gh stack extension, and no comment is written.\n\n" +
 			"stk s is this command; stk ss is stk submit --stack, which refreshes every\n" +
 			"branch of the stack at once. Every other flag still applies, so stk ss -pn\n" +
 			"proposes the whole stack without asking anything.\n\n" +
@@ -91,6 +93,7 @@ func newSubmitCmd() *cobra.Command {
 				Stack:      wholeStack,
 				NoComment:  noComment,
 				UpdateOnly: updateOnly,
+				NoLink:     noLink,
 			})
 		},
 	}
@@ -102,6 +105,7 @@ func newSubmitCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&updateOnly, "update", "u", false, "refresh the pull requests that already exist; never open one (implies --pull)")
 	cmd.Flags().BoolVarP(&wholeStack, "stack", "s", false, "submit every branch in the stack, each onto its parent")
 	cmd.Flags().BoolVar(&noComment, "no-comment", false, "do not write or update the stack comment on the pull requests")
+	cmd.Flags().BoolVar(&noLink, "no-link", false, "do not link the pull requests as a stack on GitHub (with stk.githubStacks)")
 	_ = cmd.RegisterFlagCompletionFunc("draft-from", branchNameCompletion)
 	_ = cmd.RegisterFlagCompletionFunc("draft-branch", branchNameCompletion)
 	return cmd

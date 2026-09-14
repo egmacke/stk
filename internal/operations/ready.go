@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -59,7 +60,7 @@ func Ready(env *Env, g *stack.Graph, target *stack.Branch, opts ReadyOptions) er
 			return err
 		}
 		if pr == nil {
-			env.Out.Skip("no pull request is open for %s", b.Name)
+			env.Out.Skip("no pull request is open for %s", output.BranchName(b.Name))
 			continue
 		}
 		if pr.IsDraft == opts.Undo {
@@ -69,7 +70,7 @@ func Ready(env *Env, g *stack.Graph, target *stack.Branch, opts ReadyOptions) er
 			continue
 		}
 		if env.DryRun {
-			env.Out.Printf("(dry-run) would mark %s %s", pr, readyState(!opts.Undo))
+			env.Out.Dry("would mark %s %s", pr, readyState(!opts.Undo))
 			changed++
 			continue
 		}

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"stk/internal/operations"
+	"stk/internal/output"
 )
 
 func newRestackCmd() *cobra.Command {
@@ -75,7 +76,7 @@ func newRestackCmd() *cobra.Command {
 			}
 
 			if globals.dryRun {
-				a.Out.Printf("Current stack:")
+				a.Out.Printf("%s", output.Heading("Current stack:"))
 				a.Out.Printf("")
 				printTree(a, target.IsTrunk)
 				a.Out.Printf("")

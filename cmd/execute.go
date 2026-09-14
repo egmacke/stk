@@ -10,6 +10,7 @@ import (
 
 	"stk/internal/git"
 	"stk/internal/operations"
+	"stk/internal/output"
 )
 
 // Execute runs the stk command line and returns the process exit code.
@@ -39,7 +40,7 @@ func Execute(args []string) int {
 		if errors.As(err, &silent) {
 			return 1
 		}
-		fmt.Fprintf(os.Stderr, "stk: %s\n", err)
+		fmt.Fprintf(os.Stderr, "%s %s\n", output.Red(output.Bold("stk:")), err)
 		if errors.Is(err, operations.ErrConflict) {
 			return 1
 		}
@@ -142,7 +143,7 @@ func passthrough(args []string) int {
 	if dir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "stk: %s\n", err)
+			fmt.Fprintf(os.Stderr, "%s %s\n", output.Red(output.Bold("stk:")), err)
 			return 128
 		}
 		dir = wd

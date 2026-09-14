@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"stk/internal/forge"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -161,7 +162,7 @@ func syncStackComments(env *Env, gh *forge.GH, g *stack.Graph, target *stack.Bra
 			return 0, nil
 		}
 		for _, e := range live {
-			env.Out.Printf("(dry-run) would write the stack comment on #%d", e.Number)
+			env.Out.Dry("would write the stack comment on %s", output.Bold(fmt.Sprintf("#%d", e.Number)))
 		}
 		return len(live), nil
 	}
@@ -197,7 +198,7 @@ func syncStackComments(env *Env, gh *forge.GH, g *stack.Graph, target *stack.Bra
 			if err := gh.AddComment(e.Number, body); err != nil {
 				return changed, err
 			}
-			env.Out.OK("Commented the stack on #%d", e.Number)
+			env.Out.OK("Commented the stack on %s", output.Bold(fmt.Sprintf("#%d", e.Number)))
 			changed++
 		case c.Body == body:
 			// Already says exactly this; leave the timeline alone.
@@ -205,7 +206,7 @@ func syncStackComments(env *Env, gh *forge.GH, g *stack.Graph, target *stack.Bra
 			if err := gh.UpdateComment(c.ID, body); err != nil {
 				return changed, err
 			}
-			env.Out.OK("Updated the stack comment on #%d", e.Number)
+			env.Out.OK("Updated the stack comment on %s", output.Bold(fmt.Sprintf("#%d", e.Number)))
 			changed++
 		}
 	}

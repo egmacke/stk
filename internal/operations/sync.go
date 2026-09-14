@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"stk/internal/forge"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -66,7 +67,7 @@ func Sync(env *Env, opts SyncOptions) error {
 
 	if cfg.Remote != "" && repo.RemoteExists(cfg.Remote) {
 		if env.DryRun {
-			env.Out.Printf("(dry-run) would fetch %s", cfg.Remote)
+			env.Out.Dry("would fetch %s", cfg.Remote)
 		} else {
 			env.Out.Printf("Fetching %s...", cfg.Remote)
 			if err := repo.Fetch(cfg.Remote); err != nil {
@@ -163,7 +164,7 @@ func updateTrunk(env *Env) (string, error) {
 		return "", fmt.Errorf("trunk branch %q does not exist locally", trunk)
 	}
 	if localSHA == remoteSHA {
-		env.Out.OK("%s is already up to date", trunk)
+		env.Out.OK("%s is already up to date", output.BranchName(trunk))
 		return localSHA, nil
 	}
 	if !repo.IsAncestor(localSHA, remoteSHA) {
@@ -175,7 +176,7 @@ func updateTrunk(env *Env) (string, error) {
 	count := repo.CountCommits(localSHA, remoteSHA)
 
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would fast-forward %s by %d commit(s)", trunk, count)
+		env.Out.Dry("would fast-forward %s by %d commit(s)", output.BranchName(trunk), count)
 		// Report what a real run would prune, not what the stale trunk holds.
 		return remoteSHA, nil
 	}
@@ -200,14 +201,14 @@ func updateTrunk(env *Env) (string, error) {
 			return "", status.Error()
 		}
 		if strings.TrimSpace(status.Stdout) != "" {
-			env.Out.Skip("%s not updated: checked out with uncommitted changes in %s", trunk, holder)
+			env.Out.Skip("%s not updated: checked out with uncommitted changes in %s", output.BranchName(trunk), holder)
 			return localSHA, nil
 		}
 		if res := wt.Mutate("merge", "--ff-only", remoteRef); !res.OK() {
 			return "", res.Error()
 		}
 	}
-	env.Out.OK("%s fast-forwarded by %d commit(s)", trunk, count)
+	env.Out.OK("%s fast-forwarded by %d commit(s)", output.BranchName(trunk), count)
 	return remoteSHA, nil
 }
 
@@ -287,11 +288,11 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 
 	if len(held) > 0 {
 		env.Out.Printf("")
-		env.Out.Printf("Finished, but checked out in another worktree:")
+		env.Out.Printf("%s", output.Heading("Finished, but checked out in another worktree:"))
 		env.Out.Printf("")
 		for _, c := range held {
-			env.Out.Printf("  %s", c.Branch.Name)
-			env.Out.Printf("      %s", c.Branch.Worktree)
+			env.Out.Printf("  %s", output.BranchName(c.Branch.Name))
+			env.Out.Printf("      %s", output.Dim(c.Branch.Worktree))
 		}
 	}
 	if len(proven) == 0 && len(unproven) == 0 {
@@ -359,7 +360,7 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 		return nil
 	}
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would remove %d branch(es)", len(doomed))
+		env.Out.Dry("would remove %d branch(es)", len(doomed))
 		return nil
 	}
 
@@ -380,7 +381,7 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 		if err := dropBranch(env, b); err != nil {
 			return err
 		}
-		env.Out.OK("Removed %s", b.Name)
+		env.Out.OK("Removed %s", output.BranchName(b.Name))
 	}
 	// Last, and never at the cost of the local cleanup: the survivors' pull
 	// requests still point at the branch that has just gone.
@@ -442,10 +443,10 @@ func retargetAdopted(env *Env, prs *prFinder, adopted []adoption) {
 			return
 		}
 		if err := gh.RetargetPullRequest(pr.Number, a.NewParent.Name); err != nil {
-			env.Out.Fail("could not retarget %s onto %s: %v", pr, a.NewParent.Name, err)
+			env.Out.Fail("could not retarget %s onto %s: %v", pr, output.BranchName(a.NewParent.Name), err)
 			continue
 		}
-		env.Out.OK("Retargeted %s from %s onto %s", pr, pr.Base, a.NewParent.Name)
+		env.Out.OK("Retargeted %s from %s onto %s", pr, pr.Base, output.BranchName(a.NewParent.Name))
 	}
 }
 

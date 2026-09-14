@@ -53,17 +53,25 @@ func (p *Printer) Warnf(format string, args ...any) {
 
 // OK reports a successful step.
 func (p *Printer) OK(format string, args ...any) {
-	p.Printf(SymOK+" "+format, args...)
+	p.Printf(Green(SymOK)+" "+format, args...)
 }
 
-// Skip reports a step that was deliberately not performed.
+// Skip reports a step that was deliberately not performed. It is dimmed:
+// nothing happened, so it should not compete with the steps that did.
 func (p *Printer) Skip(format string, args ...any) {
-	p.Printf(SymSkipped+" "+format, args...)
+	p.Printf(Dim(SymSkipped)+" "+format, args...)
 }
 
 // Fail reports a failed step on stderr.
 func (p *Printer) Fail(format string, args ...any) {
-	p.Warnf(SymFailed+" "+format, args...)
+	p.Warnf(Red(SymFailed)+" "+format, args...)
+}
+
+// Dry reports the action a command would have taken. The format describes the
+// action alone ("would push %s"); the marker is added here so every dry run
+// looks the same.
+func (p *Printer) Dry(format string, args ...any) {
+	p.Printf(Dim("(dry-run)")+" "+format, args...)
 }
 
 // JSON writes an indented JSON document to stdout.

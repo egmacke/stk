@@ -7,6 +7,7 @@ import (
 
 	"stk/internal/config"
 	"stk/internal/forge"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -70,7 +71,7 @@ func linkGitHubStack(env *Env, gh *forge.GH, target *stack.Branch, prs *pullRequ
 				return false, err
 			}
 			if pr != nil {
-				env.Out.Skip("%s has no pull request, so the stack on GitHub stops below it", gap.Name)
+				env.Out.Skip("%s has no pull request, so the stack on GitHub stops below it", output.BranchName(gap.Name))
 				break
 			}
 		}
@@ -82,7 +83,7 @@ func linkGitHubStack(env *Env, gh *forge.GH, target *stack.Branch, prs *pullRequ
 
 	list := prNumbers(numbers)
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would link %s as a stack on GitHub", list)
+		env.Out.Dry("would link %s as a stack on GitHub", list)
 		return true, nil
 	}
 	if err := gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, numbers); err != nil {

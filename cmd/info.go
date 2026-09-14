@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -39,20 +40,22 @@ func newInfoCmd() *cobra.Command {
 }
 
 func printInfo(a *app, b *stack.Branch) {
+	// The label is padded before it is dimmed, since escape sequences count
+	// towards len but not towards the column.
 	row := func(label, value string) {
-		a.Out.Raw("%-13s %s", label+":", value)
+		a.Out.Raw("%s %s", output.Dim(fmt.Sprintf("%-13s", label+":")), value)
 	}
-	row("Branch", b.Name)
+	row("Branch", output.BranchName(b.Name))
 	if b.IsTrunk {
 		row("Role", "trunk")
 	} else if b.Parent != nil {
-		row("Parent", b.Parent.Name)
+		row("Parent", output.BranchName(b.Parent.Name))
 	} else {
 		row("Parent", "unknown")
 	}
 	var kids []string
 	for _, c := range b.Children {
-		kids = append(kids, c.Name)
+		kids = append(kids, output.BranchName(c.Name))
 	}
 	row("Children", orDash(strings.Join(kids, ", ")))
 	a.Out.Raw("")
@@ -65,15 +68,15 @@ func printInfo(a *app, b *stack.Branch) {
 		row("Commits", itoa(a.Repo.CountCommits(b.Base, b.SHA)))
 	}
 	if b.Upstream == "" {
-		row("Upstream", "none")
-		row("Published", "no")
+		row("Upstream", output.Dim("none"))
+		row("Published", output.Yellow("no"))
 	} else {
 		row("Upstream", b.Upstream)
-		row("Published", "yes")
+		row("Published", output.Green("yes"))
 		row("Unpushed", itoa(b.Ahead))
 		row("Behind", itoa(b.Behind))
 		if b.UpstreamGone {
-			row("Note", "upstream branch no longer exists")
+			row("Note", output.Yellow("upstream branch no longer exists"))
 		}
 	}
 	if b.PR != nil {
@@ -81,26 +84,31 @@ func printInfo(a *app, b *stack.Branch) {
 		if b.PR.Merged {
 			pr += " (merged)"
 		}
-		row("Pull request", pr)
+		row("Pull request", output.Bold(pr))
 		if b.PR.URL != "" {
-			a.Out.Raw("%-13s %s", "", b.PR.URL)
+			a.Out.Raw("%-13s %s", "", output.Dim(b.PR.URL))
 		}
 	}
 	a.Out.Raw("")
 	row("Worktree", orDash(b.Worktree))
 	if b.IsCurrent {
-		row("Dirty", yesNo(a.Graph.Dirty()))
+		dirty := a.Graph.Dirty()
+		value := output.Green(yesNo(dirty))
+		if dirty {
+			value = output.Yellow(yesNo(dirty))
+		}
+		row("Dirty", value)
 	}
 	a.Out.Raw("")
 	if b.IsTrunk {
 		row("Restack", "n/a")
 	} else if b.NeedsRestack() {
-		row("Restack", "required")
+		row("Restack", output.Yellow("required"))
 	} else {
-		row("Restack", "not required")
+		row("Restack", output.Green("not required"))
 	}
 	if problems := output.Problems(b); len(problems) > 0 {
-		row("Problems", strings.Join(problems, ", "))
+		row("Problems", output.Red(strings.Join(problems, ", ")))
 	}
 }
 

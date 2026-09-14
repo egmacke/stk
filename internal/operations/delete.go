@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"stk/internal/git"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -98,7 +99,7 @@ func Delete(env *Env, g *stack.Graph, names []string, opts DeleteOptions) error 
 		if err := dropBranch(env, b); err != nil {
 			return err
 		}
-		env.Out.OK("Deleted %s (was %s)", b.Name, git.ShortSHA(b.SHA))
+		env.Out.OK("Deleted %s (was %s)", output.BranchName(b.Name), git.ShortSHA(b.SHA))
 	}
 
 	var failed []string
@@ -235,7 +236,7 @@ func reparentSurvivors(env *Env, adopted []adoption) error {
 		if err := stack.SetParent(env.Repo, a.Child.Name, parentID(a.NewParent)); err != nil {
 			return err
 		}
-		env.Out.OK("Reparented %s onto %s", a.Child.Name, a.NewParent.Name)
+		env.Out.OK("Reparented %s onto %s", output.BranchName(a.Child.Name), output.BranchName(a.NewParent.Name))
 	}
 	return nil
 }
@@ -341,10 +342,10 @@ func resolveRemoteDeletes(env *Env, doomed []*stack.Branch, opts DeleteOptions) 
 	// Confirm is never nil here: without it the local delete above would
 	// already have refused for want of an answer.
 	env.Out.Printf("")
-	env.Out.Printf("These branches also exist on the remote:")
+	env.Out.Printf("%s", output.Heading("These branches also exist on the remote:"))
 	env.Out.Printf("")
 	for _, name := range listed {
-		env.Out.Printf("    %s", name)
+		env.Out.Printf("    %s", output.BranchName(name))
 	}
 	env.Out.Printf("")
 	env.Out.Printf("GitHub closes any open pull request whose head branch is deleted.")
@@ -364,7 +365,7 @@ func resolveRemoteDeletes(env *Env, doomed []*stack.Branch, opts DeleteOptions) 
 // already gone as the success it is.
 func deleteRemoteBranch(env *Env, target remoteBranch) error {
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would delete %s", target)
+		env.Out.Dry("would delete %s", target)
 		return nil
 	}
 	res := env.Repo.DeleteRemoteBranch(target.Remote, target.Name)
@@ -385,9 +386,9 @@ func printDeletePlan(env *Env, g *stack.Graph, doomed []*stack.Branch, adopted [
 	p := env.Out
 	prefix := ""
 	if env.DryRun {
-		prefix = "(dry-run) "
+		prefix = output.Dim("(dry-run)") + " "
 	}
-	p.Printf("%sDeleting:", prefix)
+	p.Printf("%s%s", prefix, output.Heading("Deleting:"))
 	p.Printf("")
 	width := 0
 	for _, b := range doomed {

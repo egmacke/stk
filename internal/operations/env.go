@@ -98,7 +98,7 @@ func noteDryRunStash(env *Env) {
 	if clean, err := env.Repo.IsClean(); err != nil || clean {
 		return
 	}
-	env.Out.Printf("(dry-run) would stash the uncommitted changes and restore them afterwards")
+	env.Out.Dry("would stash the uncommitted changes and restore them afterwards")
 }
 
 // resolveHead reads a branch's current tip straight from git.

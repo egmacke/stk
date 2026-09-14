@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"stk/internal/git"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -147,7 +148,7 @@ func Switch(env *Env, name string) error {
 	repo := env.Repo
 	res := repo.TrySwitch(name)
 	if res.OK() {
-		env.Out.OK("Switched to %s", name)
+		env.Out.OK("Switched to %s", output.BranchName(name))
 		return nil
 	}
 	// Git carries uncommitted changes across a switch on its own, so reaching
@@ -173,7 +174,7 @@ func Switch(env *Env, name string) error {
 		if err := stash.Drop(env); err != nil {
 			return err
 		}
-		env.Out.OK("Switched to %s", name)
+		env.Out.OK("Switched to %s", output.BranchName(name))
 		env.Out.OK("Carried your uncommitted changes across")
 		return nil
 	}

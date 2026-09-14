@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"stk/internal/git"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -91,13 +92,13 @@ func Fold(env *Env, g *stack.Graph, target *stack.Branch, opts FoldOptions) erro
 		return fmt.Errorf("cannot fast-forward %s to %s", survivor.Name, top.Name)
 	}
 	survivor.SHA = top.SHA
-	env.Out.OK("%s now ends at %s", survivor.Name, git.ShortSHA(top.SHA))
+	env.Out.OK("%s now ends at %s", output.BranchName(survivor.Name), git.ShortSHA(top.SHA))
 
 	for _, child := range adopted {
 		if err := stack.SetParent(repo, child.Name, parentID(survivor)); err != nil {
 			return err
 		}
-		env.Out.OK("Reparented %s onto %s", child.Name, survivor.Name)
+		env.Out.OK("Reparented %s onto %s", output.BranchName(child.Name), output.BranchName(survivor.Name))
 	}
 
 	// Deepest first, so the graph never points at a branch that is gone.
@@ -113,7 +114,7 @@ func Fold(env *Env, g *stack.Graph, target *stack.Branch, opts FoldOptions) erro
 		if err := repo.DeleteBranch(b.Name, true); err != nil {
 			return err
 		}
-		env.Out.OK("Folded and deleted %s (was %s)", b.Name, git.ShortSHA(b.SHA))
+		env.Out.OK("Folded and deleted %s (was %s)", output.BranchName(b.Name), git.ShortSHA(b.SHA))
 	}
 
 	if opts.ClosePulls {
@@ -251,9 +252,9 @@ func printFoldPlan(env *Env, repo *git.Repo, survivor *stack.Branch, folded, ado
 	p := env.Out
 	prefix := ""
 	if env.DryRun {
-		prefix = "(dry-run) "
+		prefix = output.Dim("(dry-run)") + " "
 	}
-	p.Printf("%sFolding into %s:", prefix, survivor.Name)
+	p.Printf("%s%s", prefix, output.Heading(fmt.Sprintf("Folding into %s:", survivor.Name)))
 	p.Printf("")
 	width := 0
 	for _, b := range folded {
@@ -327,7 +328,7 @@ func closeFoldedPulls(env *Env, g *stack.Graph, survivor *stack.Branch, folded [
 		if err := gh.ClosePullRequest(pr.Number, comment); err != nil {
 			return err
 		}
-		env.Out.OK("Closed %s (%s)", pr, b.Name)
+		env.Out.OK("Closed %s (%s)", pr, output.BranchName(b.Name))
 		closed++
 	}
 	if closed == 0 {

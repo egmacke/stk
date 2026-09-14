@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/mattn/go-isatty"
+
+	"stk/internal/output"
 )
 
 // ErrCancelled is returned when the user dismisses an interactive prompt.
@@ -30,7 +32,7 @@ func Confirm(question string, defaultYes bool) (bool, error) {
 	if defaultYes {
 		suffix = "(Y/n)"
 	}
-	line, err := ask(fmt.Sprintf("%s %s", question, suffix))
+	line, err := ask(fmt.Sprintf("%s %s", output.Bold(question), output.Dim(suffix)))
 	if err != nil {
 		return false, err
 	}
@@ -51,7 +53,7 @@ func Confirm(question string, defaultYes bool) (bool, error) {
 // An empty answer, or end of input, is treated as a cancellation rather than
 // as a value: stk never acts on a name the user did not type.
 func ReadLine(question string) (string, error) {
-	answer, err := ask(question)
+	answer, err := ask(output.Bold(question))
 	if err != nil {
 		return "", err
 	}
@@ -67,9 +69,9 @@ func ReadLine(question string) (string, error) {
 // Unlike ReadLine an empty answer is a value, because the default is one stk
 // has already shown and the user is accepting it.
 func ReadLineDefault(question, def string) (string, error) {
-	prompt := question
+	prompt := output.Bold(question)
 	if def != "" {
-		prompt = fmt.Sprintf("%s [%s]", question, def)
+		prompt = fmt.Sprintf("%s %s", output.Bold(question), output.Dim("["+def+"]"))
 	}
 	answer, err := ask(prompt)
 	if err != nil {
@@ -87,10 +89,10 @@ func ReadLineDefault(question, def string) (string, error) {
 // The default is printed rather than pre-typed, since a terminal cannot offer
 // several lines for editing; answering nothing at all accepts it.
 func ReadParagraph(question, def string) (string, error) {
-	fmt.Fprintf(os.Stderr, "%s\n", question)
+	fmt.Fprintf(os.Stderr, "%s\n", output.Bold(question))
 	for _, line := range strings.Split(def, "\n") {
 		if line != "" {
-			fmt.Fprintf(os.Stderr, "    %s\n", line)
+			fmt.Fprintf(os.Stderr, "    %s\n", output.Dim(line))
 		}
 	}
 	var lines []string

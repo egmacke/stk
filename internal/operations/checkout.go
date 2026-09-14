@@ -1,5 +1,7 @@
 package operations
 
+import "stk/internal/output"
+
 // CheckoutRemote creates a local branch from the remote's branch of the same
 // name and checks it out, so a branch a colleague pushed can be checked out
 // without fetching by hand first.
@@ -17,7 +19,7 @@ func CheckoutRemote(env *Env, name string) (bool, error) {
 	}
 	if _, ok := repo.RemoteBranchSHA(remote, name); !ok {
 		if env.DryRun {
-			env.Out.Printf("(dry-run) would fetch %s and check %s out if it exists there", remote, name)
+			env.Out.Dry("would fetch %s and check %s out if it exists there", remote, output.BranchName(name))
 			return true, nil
 		}
 		env.Out.Printf("Fetching %s...", remote)
@@ -29,13 +31,13 @@ func CheckoutRemote(env *Env, name string) (bool, error) {
 		}
 	}
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would create %s from %s/%s and switch to it", name, remote, name)
+		env.Out.Dry("would create %s from %s/%s and switch to it", output.BranchName(name), remote, name)
 		return true, nil
 	}
 	if err := repo.CreateTrackingBranch(name, remote); err != nil {
 		return false, err
 	}
-	env.Out.OK("Created %s from %s/%s", name, remote, name)
+	env.Out.OK("Created %s from %s/%s", output.BranchName(name), remote, name)
 	// The branch arrives as an ordinary git branch: stk never guesses a stack
 	// parent, so where it belongs is the caller's question to ask.
 	return true, Switch(env, name)

@@ -164,7 +164,7 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 	}
 
 	if opts.Heading != "" {
-		env.Out.Printf("%s", opts.Heading)
+		env.Out.Printf("%s", output.Heading(opts.Heading))
 		env.Out.Printf("")
 	}
 	journalled = true
@@ -191,7 +191,7 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 		op.Blocked = sortedKeys(blocked)
 		b := g.ByID[step.BranchID]
 		if b == nil {
-			env.Out.Skip("%s no longer tracked; skipped", step.Name)
+			env.Out.Skip("%s no longer tracked; skipped", output.BranchName(step.Name))
 			blocked[step.BranchID] = true
 			sum.Skipped++
 			continue
@@ -212,14 +212,14 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 		switch outcome {
 		case OutcomeCurrent:
 			sum.Current++
-			env.Out.OK("%s", b.Name)
+			env.Out.OK("%s", output.BranchName(b.Name))
 		case OutcomeRestacked:
 			sum.Restacked++
-			env.Out.OK("%s", b.Name)
+			env.Out.OK("%s", output.BranchName(b.Name))
 		case OutcomeMerged:
 			sum.Restacked++
 			env.Out.OK("%s is already in %s; its own commits went in with the merge",
-				b.Name, trunkOf(b).Name)
+				output.BranchName(b.Name), output.BranchName(trunkOf(b).Name))
 		case OutcomeSkipped:
 			sum.Skipped++
 		case OutcomeBlocked:
@@ -278,25 +278,25 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 
 	if b.HasProblem() {
 		blocked[b.ID] = true
-		env.Out.Skip("%s blocked: %s", b.Name, problemText(b))
+		env.Out.Skip("%s blocked: %s", output.BranchName(b.Name), problemText(b))
 		return OutcomeBlocked, nil
 	}
 	parent := b.Parent
 	if parent == nil {
 		blocked[b.ID] = true
-		env.Out.Skip("%s blocked: no logical parent", b.Name)
+		env.Out.Skip("%s blocked: no logical parent", output.BranchName(b.Name))
 		return OutcomeBlocked, nil
 	}
 	if blocked[parent.ID] {
 		blocked[b.ID] = true
-		env.Out.Skip("%s blocked: %s could not be processed", b.Name, parent.Name)
+		env.Out.Skip("%s blocked: %s could not be processed", output.BranchName(b.Name), output.BranchName(parent.Name))
 		return OutcomeBlocked, nil
 	}
 
 	newBase := parent.SHA
 	if newBase == "" {
 		blocked[b.ID] = true
-		env.Out.Skip("%s blocked: parent %s does not exist locally", b.Name, parent.Name)
+		env.Out.Skip("%s blocked: parent %s does not exist locally", output.BranchName(b.Name), output.BranchName(parent.Name))
 		return OutcomeBlocked, nil
 	}
 	childTip := b.SHA
@@ -317,7 +317,7 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 	// elsewhere makes it untouchable and its descendants unverifiable.
 	if b.CheckedOutElsewhere() {
 		blocked[b.ID] = true
-		env.Out.Skip("%s skipped: checked out in %s\n  Run stk restack from that worktree.", b.Name, b.Worktree)
+		env.Out.Skip("%s skipped: checked out in %s\n  Run stk restack from that worktree.", output.BranchName(b.Name), b.Worktree)
 		return OutcomeSkipped, nil
 	}
 

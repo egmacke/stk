@@ -72,7 +72,7 @@ func runInit(repo *git.Repo, printer *output.Printer, trunk, remote string) (con
 
 	cfg := config.Config{Version: config.Version, Trunk: trunk, Remote: remote}
 	if globals.dryRun {
-		printer.Printf("(dry-run) would record trunk %q and remote %q", trunk, orNone(remote))
+		printer.Dry("would record trunk %q and remote %q", trunk, orNone(remote))
 		return cfg, nil
 	}
 	if err := config.Save(repo, cfg); err != nil {

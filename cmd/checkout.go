@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"stk/internal/operations"
+	"stk/internal/output"
 	"stk/internal/stack"
 	"stk/internal/ui"
 )
@@ -92,9 +93,9 @@ func offerToTrack(a *app, name string) error {
 	}
 	a.Out.Printf("")
 	if !Interactive() {
-		a.Out.Printf("%s is not tracked by stk. To stack on it:", name)
+		a.Out.Printf("%s is not tracked by stk. To stack on it:", output.BranchName(name))
 		a.Out.Printf("")
-		a.Out.Printf("    stk track %s --parent <branch>", name)
+		a.Out.Printf("    %s", output.Command(fmt.Sprintf("stk track %s --parent <branch>", name)))
 		return nil
 	}
 	yes, err := ui.Confirm(fmt.Sprintf("Track %s in the stack?", name), true)
@@ -126,14 +127,14 @@ func offerToTrack(a *app, name string) error {
 // than letting a raw git error through.
 func switchTo(a *app, b *stack.Branch) error {
 	if b.IsCurrent {
-		a.Out.Printf("Already on %s.", b.Name)
+		a.Out.Printf("Already on %s.", output.BranchName(b.Name))
 		return nil
 	}
 	if b.CheckedOutElsewhere() {
 		return fmt.Errorf("%s is already checked out in:\n\n    %s\n\nGit does not allow this branch to be checked out here", b.Name, b.Worktree)
 	}
 	if globals.dryRun {
-		a.Out.Printf("(dry-run) would switch to %s", b.Name)
+		a.Out.Dry("would switch to %s", output.BranchName(b.Name))
 		return nil
 	}
 	// operations.Switch reports the switch itself, because with --autostash

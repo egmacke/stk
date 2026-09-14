@@ -10,6 +10,7 @@ import (
 	"stk/internal/forge"
 	"stk/internal/ghstack"
 	"stk/internal/git"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -138,7 +139,7 @@ func adoptGHBranches(env *Env, g *stack.Graph, f *ghstack.File, untracked []stri
 				prevOK = false
 			}
 			if !prevOK {
-				env.Out.Skip("%s is in gh stack's tracking, but %s below it is not tracked by stk; left alone", b.Name, prev)
+				env.Out.Skip("%s is in gh stack's tracking, but %s below it is not tracked by stk; left alone", output.BranchName(b.Name), output.BranchName(prev))
 				prev = b.Name
 				continue
 			}
@@ -148,7 +149,7 @@ func adoptGHBranches(env *Env, g *stack.Graph, f *ghstack.File, untracked []stri
 				// what stk track would have chosen.
 				mb, err := repo.MergeBase("refs/heads/"+prev, "refs/heads/"+b.Name)
 				if err != nil {
-					env.Out.Skip("%s is in gh stack's tracking, but shares no history with %s; left alone", b.Name, prev)
+					env.Out.Skip("%s is in gh stack's tracking, but shares no history with %s; left alone", output.BranchName(b.Name), output.BranchName(prev))
 					prev, prevOK = b.Name, false
 					continue
 				}
@@ -165,7 +166,7 @@ func adoptGHBranches(env *Env, g *stack.Graph, f *ghstack.File, untracked []stri
 				return adopted, err
 			}
 			newIDs[b.Name] = id
-			env.Out.OK("Tracking %s with parent %s (from gh stack)", b.Name, prev)
+			env.Out.OK("Tracking %s with parent %s (from gh stack)", output.BranchName(b.Name), output.BranchName(prev))
 			adopted++
 			prev, prevOK = b.Name, true
 		}
@@ -394,7 +395,7 @@ func TrackFromPR(env *Env, ref string) error {
 		return err
 	}
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would run gh stack checkout %s and track the branches it brings", ref)
+		env.Out.Dry("would run gh stack checkout %s and track the branches it brings", ref)
 		return nil
 	}
 	// gh stack checks the branch out itself, so the working tree is parked

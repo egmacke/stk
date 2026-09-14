@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -57,7 +58,7 @@ func Continue(env *Env) error {
 				return err
 			}
 			op.Done.Restacked++
-			env.Out.OK("%s", b.Name)
+			env.Out.OK("%s", output.BranchName(b.Name))
 		}
 	}
 

@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -45,6 +46,7 @@ func Pick(opts PickOptions) (*stack.Branch, error) {
 	if len(m.selectable()) == 0 && len(opts.Candidates) > 0 {
 		return nil, fmt.Errorf("nothing to choose from")
 	}
+	m.cursorToCurrent()
 	prog := tea.NewProgram(m)
 	final, err := prog.Run()
 	if err != nil {
@@ -63,8 +65,15 @@ func Pick(opts PickOptions) (*stack.Branch, error) {
 func (m *pickerModel) Init() tea.Cmd { return nil }
 
 // rebuild recomputes the visible rows for the current filter.
+//
+// The cursor follows the branch it was on when that branch survives the
+// filter, so typing does not silently move the selection onto a neighbour.
 func (m *pickerModel) rebuild() {
 	g := m.opts.Graph
+	var under *stack.Branch
+	if m.cursor >= 0 && m.cursor < len(m.rows) {
+		under = m.rows[m.cursor].Branch
+	}
 	needle := strings.ToLower(m.filter)
 	match := func(b *stack.Branch) bool {
 		if needle == "" {
@@ -101,13 +110,33 @@ func (m *pickerModel) rebuild() {
 	}
 	m.rows = rows
 	m.lines = RenderRows(rows, g.Current, g.Dirty())
-	if m.cursor >= len(rows) {
-		m.cursor = len(rows) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
+	m.cursor = 0
+	if under != nil {
+		for i, r := range rows {
+			if r.Selectable && r.Branch == under {
+				m.cursor = i
+				break
+			}
+		}
 	}
 	m.snapToSelectable(1)
+}
+
+// cursorToCurrent opens the picker on the branch the user is standing on.
+//
+// Starting on trunk would make enter a checkout of master or main, which is
+// almost never what was wanted; starting on the current branch makes it a
+// no-op, so the dangerous key is the harmless one until the cursor is moved.
+func (m *pickerModel) cursorToCurrent() {
+	if m.opts.Graph == nil || m.opts.Graph.Current == nil {
+		return
+	}
+	for i, r := range m.rows {
+		if r.Selectable && r.Branch == m.opts.Graph.Current {
+			m.cursor = i
+			return
+		}
+	}
 }
 
 func (m *pickerModel) selectable() []int {
@@ -219,7 +248,7 @@ func (m *pickerModel) View() string {
 	if title == "" {
 		title = "Search"
 	}
-	fmt.Fprintf(&b, "%s: %s\n\n", title, m.filter)
+	fmt.Fprintf(&b, "%s %s\n\n", output.Bold(title+":"), output.Cyan(m.filter))
 
 	visible := m.height - 8
 	if visible < 5 {
@@ -244,23 +273,24 @@ func (m *pickerModel) View() string {
 	for i := m.offset; i < end; i++ {
 		marker := "  "
 		if i == m.cursor {
-			marker = "> "
+			marker = output.Cyan(output.Bold("> "))
 		}
 		fmt.Fprintf(&b, "%s%s\n", marker, m.lines[i])
 	}
 	if len(m.lines) == 0 {
-		b.WriteString("  no matching branches\n")
+		b.WriteString(output.Dim("  no matching branches") + "\n")
 	}
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "%s\n", strings.Join(Legend()[:4], "   "))
 	if m.opts.ReadOnly {
-		b.WriteString("esc quit\n")
+		fmt.Fprintf(&b, "%s %s\n", output.Bold("esc"), output.Dim("quit"))
 	} else {
 		verb := m.opts.Verb
 		if verb == "" {
 			verb = "select"
 		}
-		fmt.Fprintf(&b, "enter %s   esc cancel\n", verb)
+		fmt.Fprintf(&b, "%s %s   %s %s\n",
+			output.Bold("enter"), output.Dim(verb), output.Bold("esc"), output.Dim("cancel"))
 	}
 	return b.String()
 }

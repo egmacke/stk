@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -116,8 +117,8 @@ func Create(env *Env, g *stack.Graph, opts CreateOptions) error {
 		return err
 	}
 
-	env.Out.OK("Created %s from %s", opts.Name, parent.Name)
-	env.Out.OK("Parent: %s", parent.Name)
+	env.Out.OK("Created %s from %s", output.BranchName(opts.Name), output.BranchName(parent.Name))
+	env.Out.OK("Parent: %s", output.BranchName(parent.Name))
 	mirrorGHStack(env, ghSyncOptions{})
 	if opts.Checkout {
 		if err := Switch(env, opts.Name); err != nil {
@@ -171,7 +172,7 @@ func Track(env *Env, g *stack.Graph, name, parentName string) error {
 	if err := stack.SetBase(repo, id, base); err != nil {
 		return err
 	}
-	env.Out.OK("Tracking %s with parent %s", child.Name, parent.Name)
+	env.Out.OK("Tracking %s with parent %s", output.BranchName(child.Name), output.BranchName(parent.Name))
 	mirrorGHStack(env, ghSyncOptions{})
 	return nil
 }
@@ -220,7 +221,7 @@ func Untrack(env *Env, g *stack.Graph, name string, opts UntrackOptions) error {
 			if err := stack.SetParent(repo, child.Name, parentID(newParent)); err != nil {
 				return err
 			}
-			env.Out.OK("Reparented %s onto %s", child.Name, newParent.Name)
+			env.Out.OK("Reparented %s onto %s", output.BranchName(child.Name), output.BranchName(newParent.Name))
 		}
 	default:
 		var childNames []string
@@ -245,7 +246,7 @@ func Untrack(env *Env, g *stack.Graph, name string, opts UntrackOptions) error {
 		if err := stack.ClearBase(repo, t.ID); err != nil {
 			return err
 		}
-		env.Out.OK("Untracked %s (git branch left in place)", t.Name)
+		env.Out.OK("Untracked %s (git branch left in place)", output.BranchName(t.Name))
 	}
 	var names []string
 	for _, t := range targets {
@@ -310,8 +311,8 @@ func Rename(env *Env, g *stack.Graph, oldName, newName string, opts RenameOption
 	if err := repo.RenameBranch(oldName, newName); err != nil {
 		return err
 	}
-	env.Out.Printf("Renamed:")
-	env.Out.Printf("    %s -> %s", oldName, newName)
+	env.Out.Printf("%s", output.Heading("Renamed:"))
+	env.Out.Printf("    %s -> %s", output.Dim(oldName), output.BranchName(newName))
 	// gh stack keys its tracking by name, so the rename is what it most
 	// needs to hear about.
 	mirrorGHStack(env, ghSyncOptions{Renames: map[string]string{oldName: newName}})
@@ -332,16 +333,16 @@ func Rename(env *Env, g *stack.Graph, oldName, newName string, opts RenameOption
 		// A local rename says nothing about the remote; stk never touches it
 		// unless it was asked to.
 		env.Out.Printf("")
-		env.Out.Printf("Remote branch remains:")
+		env.Out.Printf("%s", output.Heading("Remote branch remains:"))
 		env.Out.Printf("    %s", target)
 		env.Out.Printf("")
-		env.Out.Printf("To publish the renamed branch:")
+		env.Out.Printf("%s", output.Heading("To publish the renamed branch:"))
 		env.Out.Printf("")
-		env.Out.Printf("    git push -u %s %s", target.Remote, newName)
+		env.Out.Printf("    %s", output.Command(fmt.Sprintf("git push -u %s %s", target.Remote, newName)))
 		env.Out.Printf("")
-		env.Out.Printf("To remove the previous remote branch:")
+		env.Out.Printf("%s", output.Heading("To remove the previous remote branch:"))
 		env.Out.Printf("")
-		env.Out.Printf("    git push %s --delete %s", target.Remote, target.Name)
+		env.Out.Printf("    %s", output.Command(fmt.Sprintf("git push %s --delete %s", target.Remote, target.Name)))
 	}
 	return nil
 }
@@ -373,7 +374,7 @@ func resolveRemoteRename(env *Env, b *stack.Branch, newName string, opts RenameO
 		return target, false, nil
 	}
 	env.Out.Printf("")
-	env.Out.Printf("%s publishes to %s.", b.Name, target)
+	env.Out.Printf("%s publishes to %s.", output.BranchName(b.Name), target)
 	env.Out.Printf("")
 	env.Out.Printf("GitHub closes any open pull request whose head branch is deleted, so a")
 	env.Out.Printf("pull request open for %s will not survive the rename.", target.Name)
@@ -437,7 +438,7 @@ func Move(env *Env, g *stack.Graph, name, ontoName string) error {
 	if err := stack.SetParent(repo, b.Name, parentID(newParent)); err != nil {
 		return err
 	}
-	env.Out.OK("Parent of %s is now %s", b.Name, newParent.Name)
+	env.Out.OK("Parent of %s is now %s", output.BranchName(b.Name), output.BranchName(newParent.Name))
 	// Recorded now rather than only after the restack, which may stop on a
 	// conflict: the new parent is a fact whether or not the rebase is done.
 	mirrorGHStack(env, ghSyncOptions{})

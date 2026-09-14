@@ -7,6 +7,7 @@ import (
 
 	"stk/internal/forge"
 	"stk/internal/git"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -278,19 +279,19 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 		outcome = git.PushCreated
 	case remoteSHA == b.SHA:
 		if b.HasUpstream() {
-			env.Out.Skip("%s is already on %s", b.Name, remote)
+			env.Out.Skip("%s is already on %s", output.BranchName(b.Name), remote)
 			return git.PushCurrent, nil
 		}
 		// The commit is published already and only the local upstream link is
 		// missing, which costs no round trip to record.
 		if env.DryRun {
-			env.Out.Printf("(dry-run) would record %s/%s as the upstream of %s", remote, b.Name, b.Name)
+			env.Out.Dry("would record %s/%s as the upstream of %s", remote, b.Name, output.BranchName(b.Name))
 			return git.PushLinked, nil
 		}
 		if err := repo.SetUpstream(b.Name, remote); err != nil {
 			return git.PushLinked, err
 		}
-		env.Out.OK("Recorded %s/%s as the upstream of %s", remote, b.Name, b.Name)
+		env.Out.OK("Recorded %s/%s as the upstream of %s", remote, b.Name, output.BranchName(b.Name))
 		return git.PushLinked, nil
 	case repo.IsAncestor(remoteSHA, b.SHA):
 		outcome = git.PushUpdated
@@ -302,7 +303,7 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 	}
 
 	if env.DryRun {
-		env.Out.Printf("(dry-run) would push %s to %s (%s)", b.Name, remote, outcome)
+		env.Out.Dry("would push %s to %s (%s)", output.BranchName(b.Name), remote, outcome)
 		return outcome, nil
 	}
 
@@ -319,7 +320,7 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 		}
 		return outcome, fmt.Errorf("pushing %s to %s failed", b.Name, remote)
 	}
-	env.Out.OK("Pushed %s to %s (%s)", b.Name, remote, outcome)
+	env.Out.OK("Pushed %s to %s (%s)", output.BranchName(b.Name), remote, outcome)
 	return outcome, nil
 }
 
@@ -362,13 +363,13 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 			if moved {
 				what = "was refreshed for"
 			}
-			env.Out.OK("Pull request %s %s %s", existing, what, b.Name)
-			env.Out.Printf("    %s", existing.URL)
+			env.Out.OK("Pull request %s %s %s", existing, what, output.BranchName(b.Name))
+			env.Out.Printf("    %s", output.Dim(existing.URL))
 			return false, true, retargeted, nil
 		}
 	}
 	if opts.UpdateOnly {
-		env.Out.Skip("%s has no pull request; --update opens none", b.Name)
+		env.Out.Skip("%s has no pull request; --update opens none", output.BranchName(b.Name))
 		return false, false, false, nil
 	}
 	if !env.DryRun {
@@ -377,8 +378,8 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		// same change twice.
 		if latest, err := gh.LatestPullRequest(b.Name); err == nil && latest != nil {
 			if latest.IsMerged() {
-				env.Out.Skip("%s was merged as %s; not opening another", b.Name, latest)
-				env.Out.Printf("    Remove the branch with stk sync --cleanup")
+				env.Out.Skip("%s was merged as %s; not opening another", output.BranchName(b.Name), latest)
+				env.Out.Printf("    Remove the branch with %s", output.Command("stk sync --cleanup"))
 				return false, false, false, nil
 			}
 			if latest.State == "CLOSED" {
@@ -387,7 +388,7 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		}
 	}
 	if b.Base != "" && env.Repo.CountCommits(b.Base, b.SHA) == 0 {
-		env.Out.Skip("%s adds no commits to %s; no pull request opened", b.Name, base)
+		env.Out.Skip("%s adds no commits to %s; no pull request opened", output.BranchName(b.Name), output.BranchName(base))
 		return false, false, false, nil
 	}
 
@@ -401,8 +402,8 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		if draft {
 			kind = "a draft pull request"
 		}
-		env.Out.Printf("(dry-run) would open %s for %s onto %s", kind, b.Name, base)
-		env.Out.Printf("    title: %s", title)
+		env.Out.Dry("would open %s for %s onto %s", kind, output.BranchName(b.Name), output.BranchName(base))
+		env.Out.Printf("    %s %s", output.Dim("title:"), title)
 		// Counted, because the summary of a dry run is written in the
 		// conditional too.
 		return true, false, false, nil
@@ -422,12 +423,12 @@ func ensurePullRequest(env *Env, gh *forge.GH, g *stack.Graph, b *stack.Branch, 
 		kind = "Opened draft pull request"
 	}
 	if pr.Number > 0 {
-		env.Out.OK("%s %s for %s onto %s", kind, pr, b.Name, base)
+		env.Out.OK("%s %s for %s onto %s", kind, pr, output.BranchName(b.Name), output.BranchName(base))
 	} else {
-		env.Out.OK("%s for %s onto %s", kind, b.Name, base)
+		env.Out.OK("%s for %s onto %s", kind, output.BranchName(b.Name), output.BranchName(base))
 	}
 	if pr.URL != "" {
-		env.Out.Printf("    %s", pr.URL)
+		env.Out.Printf("    %s", output.Dim(pr.URL))
 	}
 	prs.record(b.Name, pr)
 	return true, false, false, nil

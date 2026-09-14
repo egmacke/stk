@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"stk/internal/git"
+	"stk/internal/output"
 	"stk/internal/stack"
 )
 
@@ -96,7 +97,7 @@ func Split(env *Env, g *stack.Graph, target *stack.Branch, opts SplitOptions) er
 		if err := stack.SetBase(repo, id, base); err != nil {
 			return err
 		}
-		env.Out.OK("Created %s at %s on %s", c.Name, git.ShortSHA(c.SHA), parentName(parent, g))
+		env.Out.OK("Created %s at %s on %s", output.BranchName(c.Name), git.ShortSHA(c.SHA), output.BranchName(parentName(parent, g)))
 		parent = &stack.Branch{ID: id, Name: c.Name}
 		base = c.SHA
 	}
@@ -109,14 +110,14 @@ func Split(env *Env, g *stack.Graph, target *stack.Branch, opts SplitOptions) er
 	if err := stack.SetBase(repo, target.ID, base); err != nil {
 		return err
 	}
-	env.Out.OK("%s now sits on %s", target.Name, parent.Name)
+	env.Out.OK("%s now sits on %s", output.BranchName(target.Name), output.BranchName(parent.Name))
 
 	env.Out.Printf("")
-	env.Out.Printf("%s split into %d branch(es).", target.Name, len(choices)+1)
+	env.Out.Printf("%s split into %d branch(es).", output.BranchName(target.Name), len(choices)+1)
 	env.Out.Printf("")
-	env.Out.Printf("Publish them with:")
+	env.Out.Printf("%s", output.Heading("Publish them with:"))
 	env.Out.Printf("")
-	env.Out.Printf("    stk submit --stack --pull")
+	env.Out.Printf("    %s", output.Command("stk submit --stack --pull"))
 	return nil
 }
 
@@ -193,9 +194,9 @@ func printSplitPlan(env *Env, repo *git.Repo, target *stack.Branch, commits []gi
 	p := env.Out
 	prefix := ""
 	if env.DryRun {
-		prefix = "(dry-run) "
+		prefix = output.Dim("(dry-run)") + " "
 	}
-	p.Printf("%sSplitting %s into %d branch(es), bottom first:", prefix, target.Name, len(choices)+1)
+	p.Printf("%s%s", prefix, output.Heading(fmt.Sprintf("Splitting %s into %d branch(es), bottom first:", target.Name, len(choices)+1)))
 	p.Printf("")
 
 	cut := map[string]string{}

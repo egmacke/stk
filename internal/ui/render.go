@@ -216,18 +216,28 @@ func styleName(b *stack.Branch, current *stack.Branch) string {
 	return b.Name
 }
 
-// Legend explains the status markers.
+// Legend explains the status markers. Each marker is styled the way it is
+// styled in the tree itself, so the legend and the stack read alike.
 func Legend() []string {
+	// The marker is padded before it is styled: escape sequences have no
+	// width on screen but plenty in len.
+	entry := func(marker string, style func(string) string, text string) string {
+		pad := 4 - len([]rune(marker))
+		if pad < 1 {
+			pad = 1
+		}
+		return style(marker) + strings.Repeat(" ", pad) + output.Dim(text)
+	}
 	return []string{
-		output.SymAhead + "N  commits not pushed",
-		output.SymBehind + "N  commits behind upstream",
-		output.SymAhead + "?  no upstream branch",
-		output.SymAhead + "!  upstream branch is gone",
-		output.SymRestack + "   requires restack",
-		output.SymWorktree + "   checked out in another worktree",
-		output.SymDirty + "   uncommitted changes",
-		output.SymProblem + "   metadata needs repair",
-		output.SymCurrent + "   current branch",
-		"#N   pull request recorded by gh stack (stk.githubStacks)",
+		entry(output.SymAhead+"N", output.Yellow, "commits not pushed"),
+		entry(output.SymBehind+"N", output.Yellow, "commits behind upstream"),
+		entry(output.SymAhead+"?", output.Yellow, "no upstream branch"),
+		entry(output.SymAhead+"!", output.Yellow, "upstream branch is gone"),
+		entry(output.SymRestack, output.Yellow, "requires restack"),
+		entry(output.SymWorktree, output.Yellow, "checked out in another worktree"),
+		entry(output.SymDirty, output.Yellow, "uncommitted changes"),
+		entry(output.SymProblem, output.Red, "metadata needs repair"),
+		entry(output.SymCurrent, output.Cyan, "current branch"),
+		entry("#N", output.Dim, "pull request recorded by gh stack (stk.githubStacks)"),
 	}
 }

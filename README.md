@@ -763,6 +763,10 @@ stk track loose             # picker: Parent of loose
 stk move web                # picker: Move web onto
 ```
 
+The picker opens on the branch you are already on, not on trunk, so pressing
+enter straight away changes nothing. Typing filters the list, and the highlight
+stays on its branch for as long as that branch still matches.
+
 Dismissing a prompt changes nothing and exits successfully. With
 `--no-interactive` the missing value stays an error, so scripts still fail
 loudly:

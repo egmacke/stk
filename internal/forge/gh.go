@@ -16,6 +16,27 @@ var ErrNoCLI = errors.New("the GitHub CLI (gh) is not installed")
 // ErrNotAuthenticated is returned when gh holds no credentials for the host.
 var ErrNotAuthenticated = errors.New("the GitHub CLI is not logged in")
 
+// ErrNoStackExtension is returned when gh is installed but the gh stack
+// extension is not.
+var ErrNoStackExtension = errors.New("the gh stack extension is not installed")
+
+// ExitStacksUnavailable is the exit code gh stack uses when the repository
+// does not have stacked pull requests enabled.
+const ExitStacksUnavailable = 9
+
+// CommandError is a gh invocation that exited non-zero. The exit code is kept
+// because gh stack documents what each of its codes means, and stk can then
+// say something more useful than relaying the message.
+type CommandError struct {
+	Args     []string
+	ExitCode int
+	Message  string
+}
+
+func (e *CommandError) Error() string {
+	return fmt.Sprintf("gh %s: %s", strings.Join(e.Args, " "), e.Message)
+}
+
 // GH runs the GitHub CLI against one repository.
 type GH struct {
 	// Repo is passed to every call, so stk always acts on the repository
@@ -96,13 +117,109 @@ func (g *GH) exec(full ...string) (string, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return strings.TrimSpace(stdout.String()), fmt.Errorf("gh %s: %s", strings.Join(full, " "), msg)
+		code := -1
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		}
+		return strings.TrimSpace(stdout.String()), &CommandError{Args: full, ExitCode: code, Message: msg}
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
 
 // prFields are the pull request fields stk reads.
 const prFields = "number,url,title,isDraft,state,baseRefName,headRefName"
+
+// interactive runs gh with the process's own stdio attached, for the gh stack
+// commands that talk to the user themselves: they print progress, and may ask
+// a question stk cannot answer for them.
+func (g *GH) interactive(full ...string) error {
+	if g.Verbose && g.Log != nil {
+		fmt.Fprintf(g.Log, "+ gh %s\n", strings.Join(full, " "))
+	}
+	cmd := exec.Command("gh", full...)
+	cmd.Dir = g.Dir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+	code := -1
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	}
+	return &CommandError{Args: full, ExitCode: code, Message: err.Error()}
+}
+
+// CheckoutStack runs gh stack checkout for a pull request number, pull request
+// URL or stack number: gh stack discovers the stack on GitHub, fetches its
+// branches, records the stack in its local tracking and checks out the branch
+// asked for.
+//
+// It runs with the terminal attached, because gh stack reports its own
+// progress and, when a stack it already tracks locally does not match the one
+// on GitHub, asks how to resolve that.
+func (g *GH) CheckoutStack(ref string) error {
+	return g.interactive("stack", "checkout", ref)
+}
+
+// PullRequestState returns the state of a pull request by number: OPEN, MERGED
+// or CLOSED.
+func (g *GH) PullRequestState(number int) (string, error) {
+	out, err := g.run("pr", "view", fmt.Sprintf("%d", number), "--json", "state")
+	if err != nil {
+		return "", err
+	}
+	var pr struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		return "", fmt.Errorf("reading gh pr view output: %w", err)
+	}
+	return pr.State, nil
+}
+
+// HasStackExtension reports whether the gh stack extension is installed.
+//
+// gh extension list prints one extension per line as "gh <name> <repo>
+// <version>", so the name is matched rather than the repository it came from:
+// a fork of the extension is still the extension.
+func (g *GH) HasStackExtension() error {
+	out, err := g.exec("extension", "list")
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "gh" && fields[1] == "stack" {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w\n\nInstall it with:\n\n    gh extension install github/gh-stack", ErrNoStackExtension)
+}
+
+// LinkStack links pull requests into one GitHub stack, bottom first, through
+// gh stack link.
+//
+// Pull requests are named by number rather than by branch, so gh stack link
+// neither pushes nor opens anything: stk has already done both, its own way,
+// and the link is the only thing left to record. base is the branch the bottom
+// of the stack rests on, and remote is named explicitly so a repository with
+// several remotes never stops on gh's own picker.
+func (g *GH) LinkStack(base, remote string, numbers []int) error {
+	args := []string{"stack", "link", "--base", base}
+	if remote != "" {
+		args = append(args, "--remote", remote)
+	}
+	for _, n := range numbers {
+		args = append(args, fmt.Sprintf("%d", n))
+	}
+	_, err := g.exec(args...)
+	return err
+}
 
 // OpenPullRequest returns the open pull request whose head is branch, or nil
 // when there is none.

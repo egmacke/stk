@@ -205,6 +205,7 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 			// leave no journal behind so the repository is not wedged.
 			_ = op.Clear(env.Repo)
 			restoreOriginal(env, op)
+			mirrorGHStack(env, ghSyncOptions{})
 			op.Autostash().Restore(env)
 			return sum, err
 		}
@@ -232,6 +233,9 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 		op.Autostash().Restore(env)
 		return sum, err
 	}
+	// Every rebase moved a base, which is the one thing gh stack records
+	// about a branch besides its name.
+	mirrorGHStack(env, ghSyncOptions{})
 	env.Out.Printf("")
 	if sum.Restacked == 0 && sum.Skipped == 0 && sum.Blocked == 0 {
 		doneMessage := op.DoneMessage

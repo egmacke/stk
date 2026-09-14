@@ -25,7 +25,15 @@ const (
 	// KeyAutostash turns autostashing off for every command that accepts it
 	// when set to false. It is on unless the repository says otherwise.
 	KeyAutostash = "stk.autostash"
+	// KeyGitHubStacks makes stk submit link the pull requests of a stack as a
+	// GitHub stack through the gh stack extension, instead of writing the
+	// stack comment. It is off unless the repository asks for it.
+	KeyGitHubStacks = "stk.githubStacks"
 )
+
+// GitHubStacksDefault is what stk does when the repository has expressed no
+// preference: the stack comment, which needs nothing beyond gh itself.
+const GitHubStacksDefault = false
 
 // Config is the repository-wide stk configuration.
 type Config struct {
@@ -36,6 +44,10 @@ type Config struct {
 	// uncommitted changes instead of refusing to run. It defaults to true;
 	// stk.autostash = false turns it off repository-wide.
 	Autostash bool
+	// GitHubStacks makes stk submit publish the shape of a stack as a GitHub
+	// stack, through gh stack link, rather than as a comment on each pull
+	// request. It defaults to false; stk.githubStacks = true turns it on.
+	GitHubStacks bool
 }
 
 // Load reads the configuration. ok is false when the repository has never been
@@ -63,6 +75,11 @@ func Load(repo *git.Repo) (cfg Config, ok bool, err error) {
 		return cfg, true, convErr
 	}
 	cfg.Autostash = autostash
+	githubStacks, convErr := repo.ConfigBool(KeyGitHubStacks, GitHubStacksDefault)
+	if convErr != nil {
+		return cfg, true, convErr
+	}
+	cfg.GitHubStacks = githubStacks
 	if cfg.Trunk == "" {
 		return cfg, true, fmt.Errorf("%s is not set; run stk init", KeyTrunk)
 	}
@@ -71,8 +88,9 @@ func Load(repo *git.Repo) (cfg Config, ok bool, err error) {
 
 // Save writes the detected settings to the repository config.
 //
-// KeyAutostash is deliberately left alone: it is a standing preference the
-// user sets by hand, and re-running stk init must not clear it.
+// KeyAutostash and KeyGitHubStacks are deliberately left alone: they are
+// standing preferences the user sets by hand, and re-running stk init must not
+// clear them.
 func Save(repo *git.Repo, cfg Config) error {
 	if err := repo.ConfigSet(KeyVersion, strconv.Itoa(cfg.Version)); err != nil {
 		return err

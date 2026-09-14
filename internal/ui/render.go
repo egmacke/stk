@@ -142,6 +142,19 @@ func Status(b *stack.Branch, dirty bool) string {
 	return strings.Join(parts, " ")
 }
 
+// PullRequestLabel names the branch's pull request the way GitHub does, with
+// its fate when it has one, or returns "" when none is recorded.
+func PullRequestLabel(b *stack.Branch) string {
+	if b == nil || b.PR == nil {
+		return ""
+	}
+	label := fmt.Sprintf("#%d", b.PR.Number)
+	if b.PR.Merged {
+		label += " merged"
+	}
+	return label
+}
+
 // RenderRows formats rows into aligned text lines. current marks the branch to
 // annotate with the current-branch arrow.
 func RenderRows(rows []Row, current *stack.Branch, dirty bool) []string {
@@ -157,19 +170,25 @@ func RenderRows(rows []Row, current *stack.Branch, dirty bool) []string {
 			out = append(out, output.Dim(r.Text))
 			continue
 		}
+		var parts []string
+		// The pull request first, dimmed: it is information, not a marker
+		// that wants anything done.
+		if pr := PullRequestLabel(r.Branch); pr != "" {
+			parts = append(parts, output.Dim(pr))
+		}
 		status := Status(r.Branch, dirty)
 		if r.Branch.HasProblem() {
 			status = output.Red(status)
 		} else if status != "" {
 			status = output.Yellow(status)
 		}
-		if r.Branch == current {
-			if status == "" {
-				status = output.Cyan(output.SymCurrent)
-			} else {
-				status = status + " " + output.Cyan(output.SymCurrent)
-			}
+		if status != "" {
+			parts = append(parts, status)
 		}
+		if r.Branch == current {
+			parts = append(parts, output.Cyan(output.SymCurrent))
+		}
+		status = strings.Join(parts, " ")
 		label := r.Label()
 		pad := width - len([]rune(label))
 		if pad < 0 {
@@ -209,5 +228,6 @@ func Legend() []string {
 		output.SymDirty + "   uncommitted changes",
 		output.SymProblem + "   metadata needs repair",
 		output.SymCurrent + "   current branch",
+		"#N   pull request recorded by gh stack (stk.githubStacks)",
 	}
 }

@@ -129,6 +129,7 @@ func Abort(env *Env) error {
 	if err := op.Clear(repo); err != nil {
 		return err
 	}
+	mirrorGHStack(env, ghSyncOptions{})
 	env.Out.OK("Aborted stk %s; %d branch(es) restored.", op.Type, restored)
 	// The branches are back where they were, so the changes parked when the
 	// operation started belong in the working tree again.

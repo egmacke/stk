@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -32,11 +34,28 @@ type comment struct {
 	Login string `json:"login"`
 }
 
+// ghStack is one stack linked through gh stack link.
+type ghStack struct {
+	Base   string `json:"base"`
+	Remote string `json:"remote"`
+	PRs    []int  `json:"prs"`
+}
+
+// remoteStack is a stack as GitHub holds it, which gh stack checkout can
+// discover: a number, a base branch and pull requests bottom first.
+type remoteStack struct {
+	Number int    `json:"number"`
+	Base   string `json:"base"`
+	PRs    []int  `json:"prs"`
+}
+
 type state struct {
-	NextPR      int                  `json:"nextPr"`
-	NextComment int64                `json:"nextComment"`
-	PRs         []pullRequest        `json:"prs"`
-	Comments    map[string][]comment `json:"comments"`
+	NextPR       int                  `json:"nextPr"`
+	NextComment  int64                `json:"nextComment"`
+	PRs          []pullRequest        `json:"prs"`
+	Comments     map[string][]comment `json:"comments"`
+	Stacks       []ghStack            `json:"stacks"`
+	RemoteStacks []remoteStack        `json:"remoteStacks"`
 }
 
 func statePath() string {
@@ -133,6 +152,14 @@ func main() {
 		closePR(args[2:])
 	case "pr edit":
 		editPR(args[2:])
+	case "pr view":
+		viewPR(args[2:])
+	case "stack checkout":
+		checkoutStack(args[2:])
+	case "extension list":
+		listExtensions()
+	case "stack link":
+		linkStack(args[2:])
 	default:
 		if args[0] == "api" {
 			api(args[1:])
@@ -150,6 +177,98 @@ func authStatus() {
 		}
 	}
 	fmt.Println("Logged in to github.com account tester")
+}
+
+// flagged reports whether the file named by an environment variable exists,
+// which is how a test flips one of the stub's behaviours.
+func flagged(env string) bool {
+	path := os.Getenv(env)
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// listExtensions answers gh extension list in gh's tab-separated shape. The
+// stack extension is installed unless a test says otherwise.
+func listExtensions() {
+	if flagged("GH_NO_STACK_EXTENSION") {
+		return
+	}
+	fmt.Println("gh stack\tgithub/gh-stack\tv1.0.0")
+}
+
+// linkStack answers gh stack link <numbers...>: every argument stk passes is
+// a pull request number, and pull requests already in a stack extend that
+// stack rather than starting another.
+func linkStack(args []string) {
+	if flagged("GH_NO_STACKS") {
+		fmt.Fprintln(os.Stderr, "✗ Stacked pull requests are not available for this repository")
+		os.Exit(9)
+	}
+	values, _ := flags(args)
+	if values["base"] == "" {
+		fail("stack link without --base")
+	}
+	if values["remote"] == "" {
+		fail("stack link without --remote")
+	}
+	var numbers []int
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			i++ // skip the value
+			continue
+		}
+		n, err := strconv.Atoi(args[i])
+		if err != nil {
+			fail("stack link with a branch name %q; stk should pass pull request numbers", args[i])
+		}
+		numbers = append(numbers, n)
+	}
+	if len(numbers) < 2 {
+		fail("stack link needs at least two pull requests")
+	}
+	s := load()
+	known := map[int]bool{}
+	for _, pr := range s.PRs {
+		known[pr.Number] = true
+	}
+	for _, n := range numbers {
+		if !known[n] {
+			fail("no pull request %d", n)
+		}
+	}
+	for i := range s.Stacks {
+		for _, have := range s.Stacks[i].PRs {
+			for _, n := range numbers {
+				if have != n {
+					continue
+				}
+				// Additive only, as the real thing is.
+				for _, n := range numbers {
+					if !contains(s.Stacks[i].PRs, n) {
+						s.Stacks[i].PRs = append(s.Stacks[i].PRs, n)
+					}
+				}
+				s.save()
+				fmt.Fprintf(os.Stderr, "Updated stack to %d PRs\n", len(s.Stacks[i].PRs))
+				return
+			}
+		}
+	}
+	s.Stacks = append(s.Stacks, ghStack{Base: values["base"], Remote: values["remote"], PRs: numbers})
+	s.save()
+	fmt.Fprintf(os.Stderr, "Created stack with %d PRs\n", len(numbers))
+}
+
+func contains(list []int, n int) bool {
+	for _, have := range list {
+		if have == n {
+			return true
+		}
+	}
+	return false
 }
 
 func listPRs(args []string) {
@@ -227,6 +346,171 @@ func createPR(args []string) {
 	s.PRs = append(s.PRs, pr)
 	s.save()
 	fmt.Println(pr.URL)
+}
+
+// viewPR answers gh pr view <n> --json state.
+func viewPR(args []string) {
+	values, _ := flags(args)
+	number := ""
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") && values["repo"] != a && values["json"] != a {
+			number = a
+			break
+		}
+	}
+	n, err := strconv.Atoi(number)
+	if err != nil {
+		fail("bad pull request number %q", number)
+	}
+	for _, pr := range load().PRs {
+		if pr.Number == n {
+			out, _ := json.Marshal(map[string]string{"state": pr.State})
+			fmt.Println(string(out))
+			return
+		}
+	}
+	fail("no pull request %d", n)
+}
+
+// gitOut runs git in the current directory, as gh stack would, and fails
+// loudly when git does.
+func gitOut(args ...string) string {
+	cmd := exec.Command("git", args...)
+	var out, errOut strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		fail("git %s: %s", strings.Join(args, " "), strings.TrimSpace(errOut.String()))
+	}
+	return strings.TrimSpace(out.String())
+}
+
+// localStackFile is gh stack's tracking file, resolved the way gh stack
+// resolves it: through git rev-parse --git-dir from the current directory.
+type localStackFile struct {
+	SchemaVersion int              `json:"schemaVersion"`
+	Repository    string           `json:"repository"`
+	Stacks        []map[string]any `json:"stacks"`
+}
+
+func stackFilePath() string {
+	return filepath.Join(gitOut("rev-parse", "--git-dir"), "gh-stack")
+}
+
+// checkoutStack answers gh stack checkout <pr-number | pr-url | stack-number>
+// the way the real one does for a stack it does not yet track: it finds the
+// stack on GitHub, fetches its branches, writes its local tracking and checks
+// out the branch asked for. A stack it already tracks with a different
+// composition is refused with exit code 3, which is what the real one does
+// when it cannot ask.
+func checkoutStack(args []string) {
+	if len(args) != 1 {
+		fail("stack checkout wants exactly one argument, got %q", strings.Join(args, " "))
+	}
+	ref := args[0]
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		ref = ref[i+1:]
+	}
+	n, err := strconv.Atoi(ref)
+	if err != nil {
+		fail("stack checkout with a branch name %q; stk should pass a pull request", args[0])
+	}
+	s := load()
+	byNumber := map[int]pullRequest{}
+	for _, pr := range s.PRs {
+		byNumber[pr.Number] = pr
+	}
+	var found *remoteStack
+	target := ""
+	for i := range s.RemoteStacks {
+		rs := &s.RemoteStacks[i]
+		if rs.Number == n {
+			found, target = rs, byNumber[rs.PRs[len(rs.PRs)-1]].Head
+			break
+		}
+		for _, pr := range rs.PRs {
+			if pr == n {
+				found, target = rs, byNumber[n].Head
+				break
+			}
+		}
+		if found != nil {
+			break
+		}
+	}
+	if found == nil {
+		fmt.Fprintf(os.Stderr, "✗ no stack found for %s\n", args[0])
+		os.Exit(2)
+	}
+	var branches []string
+	for _, pr := range found.PRs {
+		branches = append(branches, byNumber[pr].Head)
+	}
+
+	// Composition check against the local tracking.
+	path := stackFilePath()
+	local := localStackFile{SchemaVersion: 1, Stacks: []map[string]any{}}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &local); err != nil {
+			fail("unreadable %s: %v", path, err)
+		}
+	}
+	for _, st := range local.Stacks {
+		entries, _ := st["branches"].([]any)
+		var names []string
+		hit := false
+		for _, e := range entries {
+			m, _ := e.(map[string]any)
+			name, _ := m["branch"].(string)
+			names = append(names, name)
+			for _, b := range branches {
+				if b == name {
+					hit = true
+				}
+			}
+		}
+		if !hit {
+			continue
+		}
+		if strings.Join(names, " ") == strings.Join(branches, " ") {
+			gitOut("checkout", "-q", target)
+			fmt.Fprintln(os.Stderr, "✓ Local stack matches remote — switching to branch")
+			return
+		}
+		fmt.Fprintln(os.Stderr, "✗ local stack composition differs from remote")
+		os.Exit(3)
+	}
+
+	// Fetch and create the branches, then record the stack.
+	prev := found.Base
+	var refs []map[string]any
+	for i, name := range branches {
+		gitOut("fetch", "-q", "origin", name)
+		if exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+name).Run() != nil {
+			gitOut("branch", "--track", name, "origin/"+name)
+		}
+		pr := byNumber[found.PRs[i]]
+		refs = append(refs, map[string]any{
+			"branch":      name,
+			"base":        gitOut("rev-parse", "refs/heads/"+prev),
+			"pullRequest": map[string]any{"number": pr.Number, "url": pr.URL},
+		})
+		prev = name
+	}
+	local.Stacks = append(local.Stacks, map[string]any{
+		"number":   found.Number,
+		"trunk":    map[string]any{"branch": found.Base, "head": gitOut("rev-parse", "refs/heads/"+found.Base)},
+		"branches": refs,
+	})
+	data, err := json.MarshalIndent(local, "", "  ")
+	if err != nil {
+		fail("%v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		fail("%v", err)
+	}
+	gitOut("checkout", "-q", target)
+	fmt.Fprintf(os.Stderr, "✓ Checked out stack #%d at %s\n", found.Number, target)
 }
 
 func readyPR(args []string) {

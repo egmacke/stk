@@ -99,6 +99,19 @@ func Sync(env *Env, opts SyncOptions) error {
 		}
 	}
 
+	// The gh stack half of a sync: whatever gh stack has been told about the
+	// stack since stk last looked, adopted, and its tracking brought back into
+	// step; then what GitHub knows about the pull requests of the branches now
+	// recorded there. The restack that follows mirrors again, if it moves
+	// anything.
+	if _, err := syncGHStack(env, ghSyncOptions{}); err != nil {
+		return err
+	}
+	refreshGHPullRequests(env)
+	if g, err = stack.Load(repo, cfg); err != nil {
+		return err
+	}
+
 	if !opts.Restack {
 		return nil
 	}

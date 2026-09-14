@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "cf9f34768b94b5e51d0f0019ff43181856c2cee2",
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "package-name": "stk",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false,
+      "draft": false,
+      "prerelease": false,
+      "pull-request-title-pattern": "chore: release ${version}",
+      "pull-request-header": "A release is ready. Merging this pull request tags `${version}`, publishes the release notes below and attaches the prebuilt `linux` and `darwin` binaries.",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "refactor", "section": "Internal changes" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "revert", "section": "Reverts" },
+        { "type": "build", "section": "Build", "hidden": true },
+        { "type": "ci", "section": "Continuous integration", "hidden": true },
+        { "type": "chore", "section": "Chores", "hidden": true },
+        { "type": "test", "section": "Tests", "hidden": true },
+        { "type": "style", "section": "Style", "hidden": true }
+      ]
+    }
+  }
+}

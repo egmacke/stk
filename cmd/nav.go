@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/stack"
-	"stk/internal/ui"
+	"github.com/egmacke/stk/internal/stack"
+	"github.com/egmacke/stk/internal/ui"
 )
 
 func newParentCmd() *cobra.Command {

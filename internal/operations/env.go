@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	"stk/internal/config"
-	"stk/internal/git"
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/config"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // Env carries everything an operation needs: the repository, the resolved

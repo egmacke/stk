@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // Row is one line of a rendered stack tree.

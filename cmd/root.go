@@ -11,12 +11,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/config"
-	"stk/internal/git"
-	"stk/internal/operations"
-	"stk/internal/output"
-	"stk/internal/stack"
-	"stk/internal/ui"
+	"github.com/egmacke/stk/internal/config"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/operations"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
+	"github.com/egmacke/stk/internal/ui"
 )
 
 type globalFlags struct {
@@ -119,6 +119,7 @@ func NewRoot() *cobra.Command {
 		newContinueCmd(),
 		newAbortCmd(),
 		newDoctorCmd(),
+		newUpgradeCmd(),
 		newVersionCmd(),
 	)
 	return root

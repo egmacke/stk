@@ -5,11 +5,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/config"
-	"stk/internal/ghstack"
-	"stk/internal/git"
-	"stk/internal/output"
-	"stk/internal/ui"
+	"github.com/egmacke/stk/internal/config"
+	"github.com/egmacke/stk/internal/ghstack"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/ui"
 )
 
 func newInitCmd() *cobra.Command {

@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"stk/internal/forge"
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/forge"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // stackCommentMarker identifies the one comment stk maintains on a pull

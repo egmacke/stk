@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"stk/internal/git"
+	"github.com/egmacke/stk/internal/git"
 )
 
 const (

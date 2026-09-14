@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"stk/internal/git"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // Scope names how much of the graph an operation covers.

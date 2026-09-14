@@ -1,29 +1,81 @@
+# Builds the prebuilt linux and darwin binaries for a tag and attaches them to
+# that tag's GitHub release.
+#
+# Normally called by the release-please workflow the moment it cuts a tag. It
+# is a separate, reusable workflow rather than a job in that one so a release
+# whose build failed can be retried on its own, from the Actions tab, without
+# re-running release-please.
 name: release
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and attach artifacts to, e.g. v0.1.0."
+        required: true
+        type: string
+  # A tag pushed by hand still builds. release-please's own tags do not reach
+  # here -- GitHub does not start workflows from pushes made with GITHUB_TOKEN
+  # -- so this cannot double-build a release-please release.
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           cache: true
-      - name: Build release binaries
-        run: make dist VERSION=${GITHUB_REF_NAME}
-      - name: Publish
-        uses: softprops/action-gh-release@v2
+
+      # The e2e suite drives real git, which refuses to commit without one.
+      - name: git identity
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+
+      # A tag that cannot pass its own tests must not produce binaries: once a
+      # release archive has been downloaded it cannot be taken back.
+      - run: make lint
+      - run: make test
+
+      - name: Build release archives
+        run: make dist VERSION="$TAG"
+
+      # Records who built these archives, from which commit and which workflow,
+      # signed with GitHub's keyless OIDC identity. Verify with:
+      #   gh attestation verify stk_<tag>_<os>_<arch>.tar.gz --repo egmacke/stk
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
         with:
-          files: |
-            dist/*.tar.gz
-            dist/checksums.txt
-          generate_release_notes: true
+          subject-path: dist/*.tar.gz
+
+      # Uploading rather than creating leaves the release notes release-please
+      # wrote untouched. The create is only for a tag pushed by hand, which has
+      # no release behind it yet.
+      - name: Publish archives
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/*.tar.gz dist/checksums.txt --clobber

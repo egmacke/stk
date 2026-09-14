@@ -3,8 +3,8 @@ package cmd
 import (
 	"errors"
 
-	"stk/internal/stack"
-	"stk/internal/ui"
+	"github.com/egmacke/stk/internal/stack"
+	"github.com/egmacke/stk/internal/ui"
 )
 
 // promptText asks for a free-text value such as a new branch name.

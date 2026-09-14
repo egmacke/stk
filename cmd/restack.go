@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/operations"
-	"stk/internal/output"
+	"github.com/egmacke/stk/internal/operations"
+	"github.com/egmacke/stk/internal/output"
 )
 
 func newRestackCmd() *cobra.Command {

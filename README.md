@@ -21,13 +21,54 @@ as a stack on GitHub — and everything else works with no forge at all.
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/egmacke/stk/main/install.sh | sh
+```
+
+That installs a prebuilt binary for `linux` or `darwin`, on `amd64` or `arm64`,
+into `~/.local/bin`. The archive is checked against the release's own
+`checksums.txt` before it is unpacked; a download that does not match is
+discarded rather than run. Nothing needs root.
+
+```bash
+STK_VERSION=v0.1.0 sh install.sh        # pin a version
+STK_INSTALL_DIR=$HOME/bin sh install.sh # choose where it goes
+```
+
+Later:
+
+```bash
+stk upgrade           # replace this binary with the latest release
+stk upgrade --check   # only say whether a newer one exists
+```
+
+`stk upgrade` verifies downloads exactly as `install.sh` does, and needs no
+repository — it touches no branch, ref or metadata.
+
+With Go, which also works on platforms stk publishes no binaries for:
+
+```bash
+go install github.com/egmacke/stk@latest
+```
+
+A binary installed that way reports the version it was built from — the go
+command applies no build flags of its own, so `stk` reads the module version
+the toolchain records instead. `stk upgrade` works on it as usual.
+
+From a checkout:
+
+```bash
 make install          # to $GOBIN
 # or
 make build && cp stk /usr/local/bin/
 ```
 
-Release archives for `linux/{amd64,arm64}` and `darwin/{amd64,arm64}` are built
-by the `release` workflow on a `v*` tag.
+Every release also carries a build provenance attestation, so you can check
+that an archive came from this repository's release workflow rather than
+someone's laptop:
+
+```bash
+gh attestation verify stk_v0.1.0_linux_amd64.tar.gz --repo egmacke/stk
+```
 
 ## Getting started
 
@@ -83,7 +124,7 @@ stk restack
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune finished branches, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
 | `stk doctor [--json]` | Validate metadata against the repository |
-| `stk version`, `stk completion <shell>` | Build info and shell completion |
+| `stk version`, `stk upgrade`, `stk completion <shell>` | Build info, self-update and shell completion |
 
 Anything else falls through to git, exit code included:
 
@@ -1027,5 +1068,14 @@ internal/ui/            branch picker, prompts, tree rendering
 internal/output/        text and JSON output
 ```
 
-The module path is `stk`; change it in `go.mod` when the repository gets a
-permanent home.
+The module path is `github.com/egmacke/stk`, which is what lets
+`go install github.com/egmacke/stk@latest` resolve.
+
+### Releasing
+
+Releases are cut by merging a pull request. See [docs/RELEASING.md](docs/RELEASING.md).
+
+Pull request titles must be [conventional commits](https://www.conventionalcommits.org)
+(`feat:`, `fix:`, `docs:`, …), because they are squash-merged and the resulting
+commit message on `main` is what decides the next version number and writes the
+changelog. CI checks the title on every pull request.

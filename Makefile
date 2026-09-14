@@ -10,6 +10,10 @@ LDFLAGS := -s -w \
 
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
+# sha256sum on most Linux distributions, shasum on macOS. Both print the same
+# "<digest>  <name>" format, which is what install.sh and stk upgrade parse.
+SHA256 := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 'shasum -a 256')
+
 .PHONY: build install test vet fmt lint clean dist
 
 build:
@@ -29,12 +33,21 @@ fmt:
 
 lint: vet
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck install.sh; \
+	else \
+		echo "shellcheck not installed; skipping install.sh"; \
+	fi
 
 clean:
 	rm -rf $(BINARY) dist
 
 # dist cross-compiles every supported target. The only runtime dependency is
 # git itself, so the binaries are static.
+#
+# The archive names are a published interface: install.sh and stk upgrade both
+# construct them from the tag and the platform, so they cannot change without
+# breaking every installed copy's ability to upgrade itself.
 dist: clean
 	@mkdir -p dist
 	@for platform in $(PLATFORMS); do \
@@ -45,5 +58,5 @@ dist: clean
 		tar -czf dist/$(BINARY)_$(VERSION)_$${os}_$${arch}.tar.gz -C dist/$(BINARY)_$${os}_$${arch} $(BINARY); \
 		rm -rf dist/$(BINARY)_$${os}_$${arch}; \
 	done
-	@cd dist && shasum -a 256 *.tar.gz > checksums.txt
+	@cd dist && $(SHA256) *.tar.gz > checksums.txt
 	@ls -l dist

@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // pickerGraph builds the same trunk -> a -> {b -> d, c} shape as tree(), as a

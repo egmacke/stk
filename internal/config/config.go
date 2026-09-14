@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"stk/internal/git"
+	"github.com/egmacke/stk/internal/git"
 )
 
 // Version is the metadata layout version written by this build.

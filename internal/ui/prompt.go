@@ -10,7 +10,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"stk/internal/output"
+	"github.com/egmacke/stk/internal/output"
 )
 
 // ErrCancelled is returned when the user dismisses an interactive prompt.

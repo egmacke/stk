@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"stk/internal/git"
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // Outcome is what happened to one branch during a restack.

@@ -1,6 +1,6 @@
 package output
 
-import "stk/internal/stack"
+import "github.com/egmacke/stk/internal/stack"
 
 // BranchJSON is the stable machine-readable shape of one branch.
 type BranchJSON struct {

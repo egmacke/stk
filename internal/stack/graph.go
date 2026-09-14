@@ -4,8 +4,8 @@ import (
 	"sort"
 	"sync"
 
-	"stk/internal/config"
-	"stk/internal/git"
+	"github.com/egmacke/stk/internal/config"
+	"github.com/egmacke/stk/internal/git"
 )
 
 // TrunkID identifies the synthetic trunk node. It is not a valid stk id, so it

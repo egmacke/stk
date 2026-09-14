@@ -1,0 +1,49 @@
+# Keeps a "chore: release X.Y.Z" pull request open against main, holding the
+# changelog accumulated from conventional commit messages since the last tag.
+#
+# Merging that pull request is the whole release process: release-please tags
+# the merge commit, publishes the notes, and the release workflow below builds
+# and attaches the binaries.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Two pushes to main in quick succession would otherwise race to write the same
+# release pull request.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Called from here rather than triggered by the tag: GitHub does not start
+  # workflows from pushes made with GITHUB_TOKEN, so release-please's tag would
+  # never wake a tag-triggered build on its own.
+  build:
+    needs: propose
+    if: needs.propose.outputs.released == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.propose.outputs.tag }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write

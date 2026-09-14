@@ -1,4 +1,4 @@
-module stk
+module github.com/egmacke/stk
 
 go 1.24.2
 

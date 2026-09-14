@@ -407,10 +407,26 @@ func (r *repo) useGitHubURL() {
 	r.git("remote", "set-url", "origin", "https://github.com/example/repo.git")
 }
 
+// tempBase returns a temporary directory with every symlink resolved.
+//
+// macOS puts temporary directories under /var/folders, which is itself a
+// symlink to /private/var/folders. Git reports the resolved path — for a
+// worktree, for the top level, for everything — so a test that built an
+// expected path out of t.TempDir() would be comparing the two spellings of one
+// directory and would fail on macOS alone.
+func tempBase(t *testing.T) string {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base
+}
+
 // newRepo creates a repository with one commit on main, initialised for stk.
 func newRepo(t *testing.T) *repo {
 	t.Helper()
-	base := t.TempDir()
+	base := tempBase(t)
 	r := &repo{
 		t:    t,
 		Root: filepath.Join(base, "repo"),
@@ -427,7 +443,7 @@ func newRepo(t *testing.T) *repo {
 // newRepoWithRemote creates a bare origin and a clone initialised for stk.
 func newRepoWithRemote(t *testing.T) *repo {
 	t.Helper()
-	base := t.TempDir()
+	base := tempBase(t)
 	r := &repo{
 		t:      t,
 		Root:   filepath.Join(base, "repo"),

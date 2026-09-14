@@ -19,7 +19,7 @@ func TestInitialiseRepository(t *testing.T) {
 }
 
 func TestAutomaticInitPromptAccepted(t *testing.T) {
-	base := t.TempDir()
+	base := tempBase(t)
 	r := &repo{t: t, Root: filepath.Join(base, "repo"), home: filepath.Join(base, "home")}
 	mkdirAll(t, r.Root, r.home)
 	r.gitAt(r.Root, "init", "-q", "-b", "main", ".")
@@ -36,7 +36,7 @@ func TestAutomaticInitPromptAccepted(t *testing.T) {
 }
 
 func TestAutomaticInitPromptDeclined(t *testing.T) {
-	base := t.TempDir()
+	base := tempBase(t)
 	r := &repo{t: t, Root: filepath.Join(base, "repo"), home: filepath.Join(base, "home")}
 	mkdirAll(t, r.Root, r.home)
 	r.gitAt(r.Root, "init", "-q", "-b", "main", ".")
@@ -51,7 +51,7 @@ func TestAutomaticInitPromptDeclined(t *testing.T) {
 }
 
 func TestNonInteractiveRefusesToInitialise(t *testing.T) {
-	base := t.TempDir()
+	base := tempBase(t)
 	r := &repo{t: t, Root: filepath.Join(base, "repo"), home: filepath.Join(base, "home")}
 	mkdirAll(t, r.Root, r.home)
 	r.gitAt(r.Root, "init", "-q", "-b", "main", ".")
@@ -66,7 +66,7 @@ func TestNonInteractiveRefusesToInitialise(t *testing.T) {
 }
 
 func TestInitFlagInitialisesWithoutPrompting(t *testing.T) {
-	base := t.TempDir()
+	base := tempBase(t)
 	r := &repo{t: t, Root: filepath.Join(base, "repo"), home: filepath.Join(base, "home")}
 	mkdirAll(t, r.Root, r.home)
 	r.gitAt(r.Root, "init", "-q", "-b", "main", ".")

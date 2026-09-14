@@ -786,7 +786,26 @@ The following branches add nothing to main:
 ✓ Removed sc-123/api
 ```
 
-Branches checked out in a worktree are never deleted, only reported.
+A branch checked out *here* is stepped off first, so the one you are standing
+on when its pull request lands is pruned like any other. A branch checked out
+in another worktree is reported and left alone: that ref is not this worktree's
+to move.
+
+Whatever the survivors were proposed onto is corrected in the same pass. The
+branch below them has merged or gone on the remote, and a pull request left
+pointing at it makes GitHub compute the diff from further back — so the review
+shows commits belonging to the pull request underneath:
+
+```console
+✓ Reparented sc-123/service onto main
+✓ Removed sc-123/api
+✓ Retargeted #42 from sc-123/api onto main
+```
+
+A base is the one thing `stk` maintains on a pull request it did not open, and
+this is the same correction `stk submit` makes after a `stk move` or a
+`stk fold`. Merged and closed pull requests are records rather than reviews, so
+their bases are left alone, and `--no-pulls` skips the whole business.
 
 The last row is the one with no proof: a closed pull request or a deleted
 remote branch may still leave the local branch as the only copy of its commits.
@@ -823,7 +842,8 @@ with no reachable GitHub remote does the same on its own, without failing the
 sync. `--cleanup` answers yes to both lists, `--no-cleanup` skips them.
 
 `stk sync` never pushes, so it never touches a remote branch — deleting one is
-`stk delete --remote`.
+`stk delete --remote`. Retargeting a survivor is the one thing it changes on
+the forge, and it changes nothing about the branch itself.
 
 ## How the metadata is stored
 
@@ -871,7 +891,8 @@ commits belong to the branch.
 - never pushes unless you run `stk submit`, or ask `stk rename` or `stk delete`
   to move or remove a remote branch, and never force-pushes without a lease on
   what it is replacing;
-- never merges, and never edits a pull request it did not open in that run.
+- never merges, and never edits the title, body or draft state of a pull
+  request it did not open in that run — only the base, which is structural.
 
 When a restack hits a conflict it stops, tells you exactly what to do, and
 keeps a journal so `stk continue` resumes the *original* scope and `stk abort`

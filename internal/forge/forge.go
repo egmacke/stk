@@ -99,4 +99,8 @@ func (pr *PullRequest) IsMerged() bool { return pr.State == "MERGED" }
 // IsClosed reports whether the pull request was closed without landing.
 func (pr *PullRequest) IsClosed() bool { return pr.State == "CLOSED" }
 
+// IsOpen reports whether the pull request is still awaiting a decision, which
+// is the only state whose base is stk's to move.
+func (pr *PullRequest) IsOpen() bool { return pr.State == "OPEN" }
+
 func (pr *PullRequest) String() string { return fmt.Sprintf("#%d", pr.Number) }

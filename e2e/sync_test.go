@@ -361,6 +361,85 @@ func TestSyncNoPullsNeverAsksTheForge(t *testing.T) {
 	requireEqual(t, r.branchExists("api"), true, "nothing was removed without the forge")
 }
 
+func TestSyncPrunesTheBranchCheckedOutHere(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stk("create", "a")
+	r.commit("a.txt", "a\n", "a work")
+	r.stk("create", "b")
+	r.commit("b.txt", "b\n", "b work")
+	// a lands on trunk while it is the branch this worktree is standing on.
+	r.git("push", "-q", "origin", "a:main")
+	r.stk("checkout", "a")
+
+	out := r.stk("--no-interactive", "sync", "--cleanup")
+	requireContains(t, out, "Switched to main")
+	requireContains(t, out, "Reparented b onto main")
+	requireContains(t, out, "Removed a")
+	requireEqual(t, r.branchExists("a"), false, "the branch checked out here was pruned")
+	requireEqual(t, r.currentBranch(), "main", "HEAD stepped off before the delete")
+	requireEqual(t, r.parentOf("b"), "main", "the survivor was reparented")
+}
+
+func TestSyncRetargetsASurvivorsPullRequest(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("create", "a")
+	r.commit("a.txt", "a\n", "a work")
+	r.stk("create", "b")
+	r.commit("b.txt", "b\n", "b work")
+	r.stk("--no-interactive", "submit", "--stack", "--pull", "--no-prompt")
+	requireEqual(t, r.pullRequestBase(2), "a", "b starts out proposed onto a")
+
+	// a lands on trunk, so cleanup removes it and b moves down onto main.
+	r.git("push", "-q", "origin", "a:main")
+	r.stk("checkout", "b")
+
+	out := r.stk("--no-interactive", "sync", "--cleanup")
+	requireContains(t, out, "Removed a")
+	requireContains(t, out, "Retargeted #2 from a onto main")
+	requireEqual(t, r.pullRequestBase(2), "main", "the survivor's pull request follows the graph")
+}
+
+func TestSyncRetargetsAfterTheRemoteBranchBelowIsDeleted(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("create", "a")
+	r.commit("a.txt", "a\n", "a work")
+	r.stk("create", "b")
+	r.commit("b.txt", "b\n", "b work")
+	r.stk("--no-interactive", "submit", "--stack", "--pull", "--no-prompt")
+	// Somebody deleted a on the remote without it reaching main, so nothing
+	// proves where its commits went; b is still open on top of it.
+	r.git("push", "-q", "origin", "--delete", "a")
+	r.stk("checkout", "main")
+
+	res := r.stkAt(r.Root, "y\n", "--interactive", "sync", "--no-restack")
+	requireEqual(t, res.Code, 0, "exit code")
+	requireContains(t, res.All(), "Removed a")
+	requireContains(t, res.All(), "Retargeted #2 from a onto main")
+	requireEqual(t, r.pullRequestBase(2), "main", "b is no longer proposed onto a branch that is gone")
+}
+
+func TestSyncNoPullsLeavesPullRequestBasesAlone(t *testing.T) {
+	r := newRepoWithRemote(t)
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("create", "a")
+	r.commit("a.txt", "a\n", "a work")
+	r.stk("create", "b")
+	r.commit("b.txt", "b\n", "b work")
+	r.stk("--no-interactive", "submit", "--stack", "--pull", "--no-prompt")
+	r.git("push", "-q", "origin", "a:main")
+	r.stk("checkout", "b")
+
+	out := r.stk("--no-interactive", "sync", "--cleanup", "--no-pulls")
+	requireContains(t, out, "Removed a")
+	requireNotContains(t, out, "Retargeted")
+	requireEqual(t, r.pullRequestBase(2), "a", "--no-pulls asks the forge nothing, and changes nothing there")
+}
+
 func TestSyncNeverDeletesARemoteBranch(t *testing.T) {
 	r := newRepoWithRemote(t)
 	r.stubGH()

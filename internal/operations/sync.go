@@ -34,6 +34,10 @@ type SyncOptions struct {
 // Sync fetches the remote, fast-forwards trunk where that is provably safe,
 // offers to remove branches already contained in trunk, and restacks what is
 // left. It never pushes.
+//
+// The one thing it changes on the forge is the base of a pull request left
+// sitting on a branch cleanup has just removed, which is structural rather
+// than authored and would otherwise show somebody else's commits.
 func Sync(env *Env, opts SyncOptions) error {
 	repo := env.Repo
 	cfg := env.Cfg
@@ -246,15 +250,17 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 			unresolved = append(unresolved, b)
 		}
 	}
-	candidates = append(candidates, remoteFinished(env, unresolved, opts)...)
+	prs := newPRFinder(env, opts)
+	candidates = append(candidates, remoteFinished(env, unresolved, prs)...)
 
-	// Branches held by a worktree are reported but never touched: their refs
-	// are not stk's to move or delete.
+	// Branches held by another worktree are reported but never touched: their
+	// refs are not this worktree's to move or delete. One checked out here is
+	// stk's to step off, so it is offered like any other.
 	var held []pruneCandidate
 	var proven, unproven []pruneCandidate
 	for _, c := range candidates {
 		switch {
-		case c.Branch.Worktree != "":
+		case c.Branch.CheckedOutElsewhere():
 			held = append(held, c)
 		case c.Proven:
 			proven = append(proven, c)
@@ -268,7 +274,7 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 
 	if len(held) > 0 {
 		env.Out.Printf("")
-		env.Out.Printf("Finished, but currently checked out:")
+		env.Out.Printf("Finished, but checked out in another worktree:")
 		env.Out.Printf("")
 		for _, c := range held {
 			env.Out.Printf("  %s", c.Branch.Name)
@@ -345,9 +351,15 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 	}
 
 	env.Out.Printf("")
+	// git will not delete the branch HEAD points at, so this worktree moves to
+	// the nearest branch that survives before anything goes.
+	if err := stepOffDoomedBranch(env, g, doomed); err != nil {
+		return err
+	}
 	// Survivors below a pruned branch adopt the nearest ancestor that stays,
 	// so the remaining graph keeps its shape.
-	if err := reparentSurvivors(env, reparented(g, doomed)); err != nil {
+	adopted := reparented(g, doomed)
+	if err := reparentSurvivors(env, adopted); err != nil {
 		return err
 	}
 	sort.Slice(doomed, func(i, j int) bool { return doomed[i].Name < doomed[j].Name })
@@ -357,6 +369,9 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 		}
 		env.Out.OK("Removed %s", b.Name)
 	}
+	// Last, and never at the cost of the local cleanup: the survivors' pull
+	// requests still point at the branch that has just gone.
+	retargetAdopted(env, prs, adopted)
 	return nil
 }
 
@@ -366,17 +381,13 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 // A repository with no reachable GitHub remote simply yields the branches whose
 // remote counterpart has disappeared; stk never fails a sync because a pull
 // request could not be read.
-func remoteFinished(env *Env, branches []*stack.Branch, opts SyncOptions) []pruneCandidate {
+func remoteFinished(env *Env, branches []*stack.Branch, prs *prFinder) []pruneCandidate {
 	if len(branches) == 0 {
 		return nil
 	}
-	prs := map[string]*forge.PullRequest{}
-	if !opts.NoPulls && !env.DryRun {
-		prs = pullRequestsFor(env, branches)
-	}
 	var out []pruneCandidate
 	for _, b := range branches {
-		pr := prs[b.Name]
+		pr := prs.latest(b.Name)
 		switch {
 		case pr != nil && pr.IsMerged():
 			out = append(out, pruneCandidate{Branch: b, Reason: fmt.Sprintf("%s merged", pr), Proven: true})
@@ -389,46 +400,138 @@ func remoteFinished(env *Env, branches []*stack.Branch, opts SyncOptions) []prun
 	return out
 }
 
-// pullRequestsFor reads the pull request of each branch, newest first.
+// retargetAdopted points the survivors' pull requests at the branch they were
+// just reparented onto.
+//
+// Deleting the local branch is not what breaks the review: the base branch
+// below it merged or was deleted on the remote, and GitHub then computes the
+// diff from a common ancestor further back, so the pull request shows commits
+// belonging to the one below it. A base is the one thing stk maintains on a
+// pull request it did not open, and stk submit corrects it the same way after
+// a move or a fold.
+//
+// Nothing here is fatal. The local cleanup is already done by this point, and
+// a forge stk cannot reach only means the base waits for the next stk submit.
+func retargetAdopted(env *Env, prs *prFinder, adopted []adoption) {
+	for _, a := range adopted {
+		if !a.Child.HasUpstream() && !a.Child.UpstreamGone {
+			// Never published, so there is no pull request to point anywhere.
+			continue
+		}
+		pr := prs.latest(a.Child.Name)
+		// A merged or closed pull request is a record of what happened, not a
+		// review in progress; its base is no longer stk's to move.
+		if pr == nil || !pr.IsOpen() || pr.Base == "" || pr.Base == a.NewParent.Name {
+			continue
+		}
+		gh := prs.client()
+		if gh == nil {
+			return
+		}
+		if err := gh.RetargetPullRequest(pr.Number, a.NewParent.Name); err != nil {
+			env.Out.Fail("could not retarget %s onto %s: %v", pr, a.NewParent.Name, err)
+			continue
+		}
+		env.Out.OK("Retargeted %s from %s onto %s", pr, pr.Base, a.NewParent.Name)
+	}
+}
+
+// prFinder answers which pull request belongs to a branch, over one forge
+// connection shared by a whole cleanup pass.
 //
 // One listing answers for a whole stack; only a branch whose pull request is
-// older than that listing costs a call of its own. Nothing here is fatal: a
-// forge stk cannot reach just means fewer branches are offered for removal.
-func pullRequestsFor(env *Env, branches []*stack.Branch) map[string]*forge.PullRequest {
-	out := map[string]*forge.PullRequest{}
-	remote := env.Cfg.Remote
-	if remote == "" || !env.Repo.RemoteExists(remote) {
-		return out
+// older than that listing costs a call of its own, and every answer is
+// remembered, so asking again once the graph has changed shape is free.
+// Nothing here is fatal: a forge stk cannot reach just means fewer branches
+// are offered for removal, and a pull request whose base stk leaves alone.
+type prFinder struct {
+	env *Env
+	// off is set by --no-pulls and by a dry run, which ask the forge nothing.
+	off    bool
+	gh     *forge.GH
+	opened bool
+	listed bool
+	byName map[string]*forge.PullRequest
+	asked  map[string]bool
+}
+
+func newPRFinder(env *Env, opts SyncOptions) *prFinder {
+	return &prFinder{
+		env:    env,
+		off:    opts.NoPulls || env.DryRun,
+		byName: map[string]*forge.PullRequest{},
+		asked:  map[string]bool{},
+	}
+}
+
+// client opens the forge on first use, and returns nil when there is none to
+// reach.
+func (f *prFinder) client() *forge.GH {
+	if f.off || f.opened {
+		return f.gh
+	}
+	f.opened = true
+	remote := f.env.Cfg.Remote
+	if remote == "" || !f.env.Repo.RemoteExists(remote) {
+		return nil
 	}
 	// openForge already proves gh is installed and logged in; a repository
 	// where it is not simply yields no pull requests.
-	gh, err := openForge(env, remote)
+	gh, err := openForge(f.env, remote)
 	if err != nil {
-		return out
+		return nil
 	}
-	env.Out.Printf("Checking pull requests...")
+	f.gh = gh
+	return gh
+}
+
+// seed reads the repository's pull requests once, newest first.
+func (f *prFinder) seed() {
+	if f.listed {
+		return
+	}
+	f.listed = true
+	gh := f.client()
+	if gh == nil {
+		return
+	}
+	f.env.Out.Printf("Checking pull requests...")
 	list, err := gh.ListPullRequests(prListLimit)
 	if err != nil {
-		env.Out.Warnf("Could not read pull requests: %v", err)
-		return out
+		f.env.Out.Warnf("Could not read pull requests: %v", err)
+		return
 	}
 	for i := range list {
 		// Newest first, so the first entry for a head is the current one.
-		if _, seen := out[list[i].Head]; !seen {
-			out[list[i].Head] = &list[i]
-		}
-	}
-	for _, b := range branches {
-		if _, ok := out[b.Name]; ok {
+		if f.asked[list[i].Head] {
 			continue
 		}
-		pr, err := gh.LatestPullRequest(b.Name)
-		if err != nil || pr == nil {
-			continue
-		}
-		out[b.Name] = pr
+		f.asked[list[i].Head] = true
+		f.byName[list[i].Head] = &list[i]
 	}
-	return out
+}
+
+// latest returns a branch's most recent pull request whatever its state, or
+// nil when stk can see none.
+func (f *prFinder) latest(branch string) *forge.PullRequest {
+	if f.off {
+		return nil
+	}
+	f.seed()
+	if f.asked[branch] {
+		return f.byName[branch]
+	}
+	f.asked[branch] = true
+	gh := f.client()
+	if gh == nil {
+		return nil
+	}
+	pr, err := gh.LatestPullRequest(branch)
+	if err != nil {
+		return nil
+	}
+	f.byName[branch] = pr
+	return pr
 }
 
 func printPruneGroup(env *Env, heading, byline string, list []pruneCandidate) {

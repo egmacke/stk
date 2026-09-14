@@ -20,7 +20,9 @@ func newSyncCmd() *cobra.Command {
 			"A branch is finished when trunk already contains it, when its pull request\n" +
 			"landed, or when its pull request was closed or its remote branch deleted.\n" +
 			"The last two carry no proof that the commits live on anywhere else, so they\n" +
-			"are listed with what they would take with them and asked about separately.",
+			"are listed with what they would take with them and asked about separately.\n\n" +
+			"Branches left above a deleted one are reparented onto the nearest ancestor\n" +
+			"that survives, and their open pull requests are retargeted to match.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cleanup && noCleanup {

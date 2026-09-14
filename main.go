@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"stk/cmd"
+	"github.com/egmacke/stk/cmd"
 )
 
 // Build metadata, injected with -ldflags at release time.

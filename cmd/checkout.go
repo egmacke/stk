@@ -6,10 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/operations"
-	"stk/internal/output"
-	"stk/internal/stack"
-	"stk/internal/ui"
+	"github.com/egmacke/stk/internal/operations"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
+	"github.com/egmacke/stk/internal/ui"
 )
 
 func newCheckoutCmd() *cobra.Command {

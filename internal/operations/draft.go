@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // DraftChoice says which of the pull requests a submit opens should be drafts.

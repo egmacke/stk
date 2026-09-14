@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"stk/internal/config"
-	"stk/internal/forge"
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/config"
+	"github.com/egmacke/stk/internal/forge"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // requireStackExtension refuses to start a run that will need gh stack link

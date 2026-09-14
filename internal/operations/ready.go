@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // ReadyOptions configures stk ready.

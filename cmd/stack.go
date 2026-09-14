@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"stk/internal/ui"
+	"github.com/egmacke/stk/internal/ui"
 )
 
 func newStackCmd() *cobra.Command {

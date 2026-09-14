@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/git"
-	"stk/internal/operations"
-	"stk/internal/output"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/operations"
+	"github.com/egmacke/stk/internal/output"
 )
 
 // Execute runs the stk command line and returns the process exit code.

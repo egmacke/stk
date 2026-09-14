@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/git"
-	"stk/internal/operations"
-	"stk/internal/ui"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/operations"
+	"github.com/egmacke/stk/internal/ui"
 )
 
 func newSplitCmd() *cobra.Command {

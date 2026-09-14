@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // tree builds a small graph by hand: trunk -> a -> {b -> d, c}.

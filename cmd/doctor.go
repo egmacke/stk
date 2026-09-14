@@ -9,12 +9,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"stk/internal/config"
-	"stk/internal/forge"
-	"stk/internal/git"
-	"stk/internal/operations"
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/config"
+	"github.com/egmacke/stk/internal/forge"
+	"github.com/egmacke/stk/internal/git"
+	"github.com/egmacke/stk/internal/operations"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 type checkStatus string

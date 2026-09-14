@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"stk/internal/operations"
+	"github.com/egmacke/stk/internal/operations"
 )
 
 func newReadyCmd() *cobra.Command {

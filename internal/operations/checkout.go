@@ -1,6 +1,6 @@
 package operations
 
-import "stk/internal/output"
+import "github.com/egmacke/stk/internal/output"
 
 // CheckoutRemote creates a local branch from the remote's branch of the same
 // name and checks it out, so a branch a colleague pushed can be checked out

@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"stk/internal/forge"
-	"stk/internal/output"
-	"stk/internal/stack"
+	"github.com/egmacke/stk/internal/forge"
+	"github.com/egmacke/stk/internal/output"
+	"github.com/egmacke/stk/internal/stack"
 )
 
 // CleanupMode decides what stk sync does with branches that are provably

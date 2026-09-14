@@ -111,6 +111,7 @@ func NewRoot() *cobra.Command {
 		newMoveCmd(),
 		newFoldCmd(),
 		newSplitCmd(),
+		newDeleteCmd(),
 		newReadyCmd(),
 		newRestackCmd(),
 		newSubmitCmd(),
@@ -213,6 +214,17 @@ func autoInitialise(repo *git.Repo, printer *output.Printer) (config.Config, err
 	}
 	printer.Printf("")
 	return cfg, nil
+}
+
+// reload rebuilds the stack model after the repository has changed underneath
+// it, so a command can go on working against what it has just done.
+func (a *app) reload() error {
+	g, err := stack.Load(a.Repo, a.Cfg)
+	if err != nil {
+		return err
+	}
+	a.Graph = g
+	return nil
 }
 
 // resolveBranchArg returns the named branch, or the current one when no name

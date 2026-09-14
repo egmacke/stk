@@ -248,10 +248,25 @@ func Untrack(env *Env, g *stack.Graph, name string, opts UntrackOptions) error {
 	return nil
 }
 
-// Rename renames a git branch. Stack relationships survive because they are
-// keyed by stable ids, not names.
-func Rename(env *Env, g *stack.Graph, oldName, newName string) error {
+// RenameOptions configures stk rename.
+type RenameOptions struct {
+	// Yes answers every question this command would ask, including the one
+	// about the remote branch.
+	Yes bool
+	// Remote renames the remote counterpart without asking.
+	Remote bool
+	// NoRemote leaves the remote alone without asking.
+	NoRemote bool
+}
+
+// Rename renames a git branch and, when asked, the remote branch it publishes
+// to. Stack relationships survive because they are keyed by stable ids, not
+// names.
+func Rename(env *Env, g *stack.Graph, oldName, newName string, opts RenameOptions) error {
 	repo := env.Repo
+	if opts.Remote && opts.NoRemote {
+		return errors.New("use either --remote or --no-remote, not both")
+	}
 	b, ok := g.Resolve(oldName)
 	if !ok {
 		return fmt.Errorf("branch %q does not exist", oldName)
@@ -270,8 +285,19 @@ func Rename(env *Env, g *stack.Graph, oldName, newName string) error {
 	} else if !errors.Is(err, ErrNoOperation) {
 		return err
 	}
+
+	// Decided before the local rename, so a refusal costs nothing and the
+	// question is asked while the old name is still the branch's own.
+	target, moveRemote, err := resolveRemoteRename(env, b, newName, opts)
+	if err != nil {
+		return err
+	}
+
 	if env.DryRun {
 		env.Out.Printf("Would rename %s -> %s", oldName, newName)
+		if moveRemote {
+			env.Out.Printf("Would rename %s -> %s/%s", target, target.Remote, newName)
+		}
 		return nil
 	}
 	if err := repo.RenameBranch(oldName, newName); err != nil {
@@ -279,33 +305,74 @@ func Rename(env *Env, g *stack.Graph, oldName, newName string) error {
 	}
 	env.Out.Printf("Renamed:")
 	env.Out.Printf("    %s -> %s", oldName, newName)
-	if b.HasUpstream() {
-		// A local rename says nothing about the remote; stk never touches it.
+
+	if moveRemote {
+		res := repo.RenameRemoteBranch(target.Remote, target.Name, newName)
+		if !res.OK() {
+			echoGit(env, res)
+			return fmt.Errorf(
+				"the local branch is now %s, but renaming %s failed\n\n"+
+					"Finish it by hand:\n\n    git push -u %s %s\n    git push %s --delete %s",
+				newName, target, target.Remote, newName, target.Remote, target.Name)
+		}
+		env.Out.Printf("    %s -> %s/%s", target, target.Remote, newName)
+		return nil
+	}
+	if target.Name != "" {
+		// A local rename says nothing about the remote; stk never touches it
+		// unless it was asked to.
 		env.Out.Printf("")
 		env.Out.Printf("Remote branch remains:")
-		env.Out.Printf("    %s", b.Upstream)
+		env.Out.Printf("    %s", target)
 		env.Out.Printf("")
 		env.Out.Printf("To publish the renamed branch:")
 		env.Out.Printf("")
-		env.Out.Printf("    git push -u %s %s", remoteOf(b.Upstream, env.Cfg.Remote), newName)
+		env.Out.Printf("    git push -u %s %s", target.Remote, newName)
 		env.Out.Printf("")
 		env.Out.Printf("To remove the previous remote branch:")
 		env.Out.Printf("")
-		env.Out.Printf("    git push %s --delete %s", remoteOf(b.Upstream, env.Cfg.Remote), oldName)
+		env.Out.Printf("    git push %s --delete %s", target.Remote, target.Name)
 	}
 	return nil
 }
 
-func remoteOf(upstream, fallback string) string {
-	for i := 0; i < len(upstream); i++ {
-		if upstream[i] == '/' {
-			return upstream[:i]
+// resolveRemoteRename decides whether the remote branch moves with the local
+// one. The returned branch is the remote counterpart stk found, whatever the
+// answer, so the caller can describe what it left behind.
+func resolveRemoteRename(env *Env, b *stack.Branch, newName string, opts RenameOptions) (remoteBranch, bool, error) {
+	target, ok := remoteCounterpart(env, b)
+	if !ok {
+		return remoteBranch{}, false, nil
+	}
+	if opts.NoRemote {
+		return target, false, nil
+	}
+	// Renaming onto a remote branch someone else is using would replace their
+	// work with this one under a lease stk never took.
+	if _, taken := env.Repo.RemoteBranchSHA(target.Remote, newName); taken {
+		if opts.Remote {
+			return target, false, fmt.Errorf("%s/%s already exists, so stk will not rename %s onto it", target.Remote, newName, target)
 		}
+		env.Out.Warnf("%s/%s already exists, so the remote branch is left alone.", target.Remote, newName)
+		return target, false, nil
 	}
-	if fallback == "" {
-		return "origin"
+	if opts.Remote || opts.Yes {
+		return target, true, nil
 	}
-	return fallback
+	if env.Confirm == nil {
+		return target, false, nil
+	}
+	env.Out.Printf("")
+	env.Out.Printf("%s publishes to %s.", b.Name, target)
+	env.Out.Printf("")
+	env.Out.Printf("GitHub closes any open pull request whose head branch is deleted, so a")
+	env.Out.Printf("pull request open for %s will not survive the rename.", target.Name)
+	env.Out.Printf("")
+	yes, err := env.Confirm(fmt.Sprintf("Rename %s to %s/%s as well?", target, target.Remote, newName), false)
+	if err != nil {
+		return target, false, err
+	}
+	return target, yes, nil
 }
 
 // Move re-parents a branch and restacks it and its descendants onto the new

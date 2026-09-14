@@ -94,6 +94,12 @@ func (repo *Repo) CreateBranch(name, start string) error {
 	return repo.R.Mutate("branch", name, start).Error()
 }
 
+// CreateTrackingBranch creates a local branch at the remote's branch of the
+// same name, with that remote-tracking ref as its upstream.
+func (repo *Repo) CreateTrackingBranch(name, remote string) error {
+	return repo.R.Mutate("branch", "--track", name, remote+"/"+name).Error()
+}
+
 // Switch checks out an existing branch.
 func (repo *Repo) Switch(name string) error { return repo.TrySwitch(name).Error() }
 

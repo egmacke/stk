@@ -10,13 +10,19 @@ import (
 )
 
 func newRenameCmd() *cobra.Command {
+	var yes, remote, noRemote bool
 	cmd := &cobra.Command{
 		Use:     "rename [old-name] [new-name]",
 		Aliases: []string{"rn"},
-		Short:   "Rename a branch without breaking the stack",
+		Short:   "Rename a branch, and its remote branch with it",
 		Long: "Stack relationships are keyed by stable ids, so renaming a branch leaves\n" +
-			"parents and children untouched. The remote branch is never renamed or\n" +
-			"deleted.\n\n" +
+			"parents and children untouched.\n\n" +
+			"When the branch has been published, stk offers to move the remote branch\n" +
+			"with it: the new name is pushed and the old one deleted in a single push,\n" +
+			"and the upstream link follows. That is the one push outside stk submit, so\n" +
+			"it is always asked for and never assumed. GitHub closes any open pull\n" +
+			"request whose head branch is deleted, so a pull request open for the old\n" +
+			"name does not survive the move.\n\n" +
 			"With one name the current branch is renamed to it; with none stk asks for\n" +
 			"the new name.",
 		Args: cobra.MaximumNArgs(2),
@@ -46,10 +52,17 @@ func newRenameCmd() *cobra.Command {
 					return err
 				}
 			}
-			return operations.Rename(a.Env, a.Graph, oldName, newName)
+			return operations.Rename(a.Env, a.Graph, oldName, newName, operations.RenameOptions{
+				Yes:      yes,
+				Remote:   remote,
+				NoRemote: noRemote,
+			})
 		},
 		ValidArgsFunction: branchNameCompletion,
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer every question with yes, including the remote one")
+	cmd.Flags().BoolVar(&remote, "remote", false, "rename the remote branch too, without asking")
+	cmd.Flags().BoolVar(&noRemote, "no-remote", false, "leave the remote branch alone without asking")
 	return cmd
 }
 

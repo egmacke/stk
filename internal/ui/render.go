@@ -203,6 +203,7 @@ func Legend() []string {
 		output.SymAhead + "N  commits not pushed",
 		output.SymBehind + "N  commits behind upstream",
 		output.SymAhead + "?  no upstream branch",
+		output.SymAhead + "!  upstream branch is gone",
 		output.SymRestack + "   requires restack",
 		output.SymWorktree + "   checked out in another worktree",
 		output.SymDirty + "   uncommitted changes",

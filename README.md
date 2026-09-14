@@ -73,6 +73,7 @@ stk restack
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
 | `stk fold [branch] [--into <b>\|--stack]` | Collapse stacked branches into one |
+| `stk split [branch] [--at <commit>]` | Divide a branch into several stacked branches |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk submit [branch] [--pull] [--draft] [--stack]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
 | `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
@@ -444,6 +445,57 @@ requests are closed with a comment pointing at the one that absorbed them;
 their remote branches are left alone, since a closed pull request can be
 reopened and a deleted branch cannot.
 
+## Splitting a branch
+
+The other direction: one branch that should have been a stack. `stk split`
+cuts after the commits you choose.
+
+```console
+$ stk split
+
+Commits on big, oldest first:
+
+   1  3eeaaf1  Add parser
+   2  ed68243  Add lexer
+   3  61b2710  Wire them up
+   4  185a664  Add docs
+
+Split after which commits? (numbers, comma separated, 1-3) 1,3
+Name for the branch ending at 3eeaaf1: [big-1] parser
+Name for the branch ending at 61b2710: [big-2] wiring
+
+✓ Created parser at 3eeaaf1 on main
+✓ Created wiring at 61b2710 on parser
+✓ big now sits on wiring
+```
+
+```text
+main                  main
+└─ big        →       └─ parser
+                         └─ wiring
+                            └─ big
+```
+
+**The branch keeps its name and ends up on top.** Its pull request therefore
+keeps its identity and simply shows fewer commits, and anything already
+stacked on it stays where it is — the new branches appear underneath.
+
+**Nothing is rebased.** The commits are already in a line, so splitting points
+new branches at commits that are already there and rewrites the metadata. Every
+commit id is untouched.
+
+The commits are numbered rather than picked from a full-screen list, so the
+same prompt works down a pipe. For scripts, name the points and the branches
+instead, oldest first:
+
+```bash
+stk split --at big~3 --name parser --at big~1 --name wiring
+```
+
+The tip cannot end a segment (there would be nothing above it), points must
+run in history order, and a name that already exists is refused before
+anything is created. Answering nothing changes nothing.
+
 ## Status markers
 
 ```text
@@ -615,8 +667,21 @@ nothing, and without the content check the branch would only be noticed on the
 *next* sync — after a restack had rebased it into emptiness.
 
 Restacking removes merged work from the branches above too, without being
-asked: `git rebase` drops a commit whose change is already upstream, so a
-squash-merged commit does not come back as a duplicate on its children.
+asked. `git rebase` drops a commit whose change is already upstream, which
+covers a merge or a rebase — but **not** a squash, where several commits become
+one and no patch matches. Replaying those on top of their own merged result is
+nothing but conflicts, for work that is already in, so `stk` recognises the
+shape and collapses the branch onto its parent instead:
+
+```console
+$ stk restack
+✓ sc-123/api is already in main; its own commits went in with the merge
+✓ sc-123/service
+```
+
+`sc-123/api` is then plainly contained in trunk, so the next `stk sync
+--cleanup` can take it away, and everything above it has been rebased onto the
+squashed commit exactly once.
 
 ```console
 $ stk sync --cleanup
@@ -699,7 +764,7 @@ main.go                 entry point
 cmd/                    cobra commands; no direct git orchestration
 internal/git/           the only code that runs git
 internal/stack/         metadata and the in-memory graph
-internal/operations/    create, track, rename, move, fold, restack, submit, ready, sync, continue, abort
+internal/operations/    create, track, rename, move, fold, split, restack, submit, ready, sync, continue, abort
 internal/forge/         the only code that knows about GitHub, through gh
 internal/config/        repository-wide settings
 internal/ui/            branch picker, prompts, tree rendering

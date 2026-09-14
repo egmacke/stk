@@ -299,6 +299,173 @@ func (r *repo) disableGHStacks() {
 	}
 }
 
+// ghStackFile is gh stack's local tracking file, decoded.
+type ghStackFile struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Repository    string `json:"repository"`
+	Stacks        []struct {
+		Number int `json:"number"`
+		Trunk  struct {
+			Branch string `json:"branch"`
+			Head   string `json:"head"`
+		} `json:"trunk"`
+		Branches []struct {
+			Branch      string `json:"branch"`
+			Base        string `json:"base"`
+			PullRequest *struct {
+				Number int    `json:"number"`
+				URL    string `json:"url"`
+				Merged bool   `json:"merged"`
+			} `json:"pullRequest"`
+		} `json:"branches"`
+	} `json:"stacks"`
+}
+
+// ghStackPath is where gh stack keeps its tracking for this repository.
+func (r *repo) ghStackPath() string { return filepath.Join(r.Root, ".git", "gh-stack") }
+
+// ghStackExists reports whether gh stack tracking has been written at all.
+func (r *repo) ghStackExists() bool {
+	_, err := os.Stat(r.ghStackPath())
+	return err == nil
+}
+
+// ghStack reads gh stack's tracking file, failing the test when it is
+// missing or unreadable.
+func (r *repo) ghStack() ghStackFile {
+	r.t.Helper()
+	data, err := os.ReadFile(r.ghStackPath())
+	if err != nil {
+		r.t.Fatalf("reading gh stack tracking: %v", err)
+	}
+	var f ghStackFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		r.t.Fatalf("decoding gh stack tracking: %v", err)
+	}
+	return f
+}
+
+// ghStackChains renders each gh stack as "trunk: a b c", for comparison.
+func (r *repo) ghStackChains() []string {
+	r.t.Helper()
+	var out []string
+	for _, s := range r.ghStack().Stacks {
+		var names []string
+		for _, b := range s.Branches {
+			names = append(names, b.Branch)
+		}
+		out = append(out, s.Trunk.Branch+": "+strings.Join(names, " "))
+	}
+	return out
+}
+
+// writeGHStack writes gh stack's tracking file by hand, as gh stack itself
+// would have.
+func (r *repo) writeGHStack(content string) {
+	r.t.Helper()
+	if err := os.WriteFile(r.ghStackPath(), []byte(content), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// editStubState applies a change to the stub gh's store.
+func (r *repo) editStubState(edit func(raw map[string]any)) {
+	r.t.Helper()
+	raw := map[string]any{}
+	if data, err := os.ReadFile(r.ghState()); err == nil {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			r.t.Fatal(err)
+		}
+	}
+	edit(raw)
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(r.ghState(), out, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// seedRemoteStack tells the stub gh that GitHub holds a stack of these pull
+// requests, bottom first, on base.
+func (r *repo) seedRemoteStack(number int, base string, prs ...int) {
+	r.t.Helper()
+	r.editStubState(func(raw map[string]any) {
+		list, _ := raw["remoteStacks"].([]any)
+		var nums []any
+		for _, n := range prs {
+			nums = append(nums, n)
+		}
+		raw["remoteStacks"] = append(list, map[string]any{"number": number, "base": base, "prs": nums})
+	})
+}
+
+// seedPullRequest adds a pull request to the stub gh's store without stk
+// having opened it.
+func (r *repo) seedPullRequest(number int, head, base string) {
+	r.t.Helper()
+	r.editStubState(func(raw map[string]any) {
+		list, _ := raw["prs"].([]any)
+		raw["prs"] = append(list, map[string]any{
+			"number":      number,
+			"url":         fmt.Sprintf("https://github.com/example/repo/pull/%d", number),
+			"title":       head,
+			"baseRefName": base,
+			"headRefName": head,
+			"state":       "OPEN",
+		})
+		if next, _ := raw["nextPr"].(float64); int(next) <= number {
+			raw["nextPr"] = number + 1
+		}
+	})
+}
+
+// mergePullRequest marks a stub pull request merged, as GitHub would.
+func (r *repo) mergePullRequest(number int) {
+	r.t.Helper()
+	r.editStubState(func(raw map[string]any) {
+		list, _ := raw["prs"].([]any)
+		for _, item := range list {
+			pr, _ := item.(map[string]any)
+			if n, _ := pr["number"].(float64); int(n) == number {
+				pr["state"] = "MERGED"
+			}
+		}
+	})
+}
+
+// remoteOnlyBranch creates a branch on origin that this clone has never seen,
+// with one commit on top of from, as a colleague's push would.
+func (r *repo) remoteOnlyBranch(name, from string) {
+	r.t.Helper()
+	other := filepath.Join(filepath.Dir(r.Root), "other")
+	if _, err := os.Stat(other); err != nil {
+		r.runIn(filepath.Dir(r.Root), "", "git", "clone", "-q", r.Origin, other)
+	}
+	for _, args := range [][]string{
+		{"fetch", "-q", "origin"},
+		{"checkout", "-q", "-B", name, "origin/" + from},
+	} {
+		if res := r.runIn(other, "", "git", args...); res.Code != 0 {
+			r.t.Fatalf("git %v in %s: %s%s", args, other, res.Stdout, res.Stderr)
+		}
+	}
+	file := strings.ReplaceAll(name, "/", "-") + ".txt"
+	if err := os.WriteFile(filepath.Join(other, file), []byte(name+"\n"), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"add", "-A"},
+		{"commit", "-q", "-m", name},
+		{"push", "-q", "origin", name},
+	} {
+		if res := r.runIn(other, "", "git", args...); res.Code != 0 {
+			r.t.Fatalf("git %v in %s: %s%s", args, other, res.Stdout, res.Stderr)
+		}
+	}
+}
+
 // stubGH puts the fake GitHub CLI on PATH.
 func (r *repo) stubGH() {
 	r.t.Helper()

@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"stk/internal/config"
+	"stk/internal/ghstack"
 	"stk/internal/git"
 	"stk/internal/output"
 	"stk/internal/ui"
@@ -80,6 +81,12 @@ func runInit(repo *git.Repo, printer *output.Printer, trunk, remote string) (con
 	printer.Printf("Detected trunk: %s", trunk)
 	printer.Printf("Detected remote: %s", orNone(remote))
 	printer.OK("stk initialised")
+	if on, _ := repo.ConfigBool(config.KeyGitHubStacks, config.GitHubStacksDefault); !on && ghstack.Exists(repo.CommonDir) {
+		printer.Printf("")
+		printer.Printf("This repository has gh stack tracking. To keep it in step with stk:")
+		printer.Printf("")
+		printer.Printf("    git config %s true", config.KeyGitHubStacks)
+	}
 	return cfg, nil
 }
 

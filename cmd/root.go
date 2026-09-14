@@ -178,6 +178,7 @@ func open() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	operations.AnnotatePullRequests(repo, cfg, g)
 	a := &app{Repo: repo, Cfg: cfg, Graph: g, Out: printer}
 	a.Env = &operations.Env{
 		Repo:        repo,

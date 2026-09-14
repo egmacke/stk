@@ -76,6 +76,16 @@ func printInfo(a *app, b *stack.Branch) {
 			row("Note", "upstream branch no longer exists")
 		}
 	}
+	if b.PR != nil {
+		pr := "#" + itoa(b.PR.Number)
+		if b.PR.Merged {
+			pr += " (merged)"
+		}
+		row("Pull request", pr)
+		if b.PR.URL != "" {
+			a.Out.Raw("%-13s %s", "", b.PR.URL)
+		}
+	}
 	a.Out.Raw("")
 	row("Worktree", orDash(b.Worktree))
 	if b.IsCurrent {

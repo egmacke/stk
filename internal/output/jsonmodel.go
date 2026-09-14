@@ -21,6 +21,16 @@ type BranchJSON struct {
 	UpstreamGone bool     `json:"upstreamGone,omitempty"`
 	Worktree     string   `json:"worktree,omitempty"`
 	Problems     []string `json:"problems,omitempty"`
+	// PR is what gh stack's tracking knows about the branch's pull request,
+	// present only when the repository keeps that tracking in step with stk.
+	PR *PullRequestJSON `json:"pr,omitempty"`
+}
+
+// PullRequestJSON is the pull request recorded for a branch.
+type PullRequestJSON struct {
+	Number int    `json:"number"`
+	URL    string `json:"url,omitempty"`
+	Merged bool   `json:"merged"`
 }
 
 // StackJSON is the document produced by stk stack --json and stk show --json.
@@ -54,6 +64,9 @@ func Branch(b *stack.Branch) BranchJSON {
 	}
 	if b.Parent != nil {
 		out.Parent = b.Parent.Name
+	}
+	if b.PR != nil {
+		out.PR = &PullRequestJSON{Number: b.PR.Number, URL: b.PR.URL, Merged: b.PR.Merged}
 	}
 	for _, c := range b.Children {
 		out.Children = append(out.Children, c.Name)

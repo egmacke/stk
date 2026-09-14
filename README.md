@@ -70,7 +70,7 @@ stk restack
 | `stk info [branch] [--json]` | Everything stk knows about a branch |
 | `stk parent` / `stk children` | Print the immediate relatives of a branch |
 | `stk up [n]` / `stk down [n]` / `stk top` / `stk bottom` | Navigate the stack |
-| `stk track [branch] [--parent <p>]` | Adopt an existing branch into the graph |
+| `stk track [branch] [--parent <p>]`, `stk track --from-pr <pr>` | Adopt an existing branch into the graph, or a whole stack from GitHub |
 | `stk untrack [branch]` | Drop metadata; the git branch is never deleted |
 | `stk rename [old] [new]` | Rename without breaking the stack, remote branch included |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
@@ -391,18 +391,48 @@ numbers, no status and no token.
 
 GitHub can hold the shape of a stack itself: a *stack* of pull requests, shown
 on every one of them, managed with the
-[`gh stack`](https://github.com/github/gh-stack) extension. `stk` can publish
-into it instead of writing the stack comment. It is opt-in, per repository:
+[`gh stack`](https://github.com/github/gh-stack) extension. `stk` can work
+with it instead of alongside it. It is opt-in, per repository:
 
 ```bash
 gh extension install github/gh-stack
 git config stk.githubStacks true
 ```
 
-From then on `stk submit --pull` ends by linking the pull requests of the stack,
-bottom first, through `gh stack link`, and writes no comment — GitHub already
-shows the stack on each pull request, so a comment would say the same thing
-twice:
+With that set, `stk` and `gh stack` describe one stack, kept in step by `stk`:
+
+- **`gh stack`'s local tracking is a mirror of `stk`'s graph.** Every command
+  that changes the graph — `create`, `track`, `untrack`, `rename`, `move`,
+  `restack`, `sync`, `continue`, `abort` — rewrites `gh stack`'s file
+  afterwards, so `gh stack view`, `gh stack up`, `gh stack push` and the rest
+  see exactly what `stk stack` sees. `gh stack`'s *base* of a branch is the
+  same fact as `stk`'s: the parent's tip the branch was last rebased onto.
+- **Branches added through `gh stack` are adopted by `stk`.** `gh stack add`,
+  `gh stack init` or `gh stack checkout` record a branch `stk` does not know;
+  the next `stk sync`, or the next change to the graph, tracks it with the
+  branch below it in `gh stack`'s list as its parent and `gh stack`'s base as
+  its base. For a branch both know, `stk`'s graph is the record.
+- **Pull requests are shared.** `stk submit --pull` records the pull requests
+  it opens or finds in `gh stack`'s tracking, so they show in `gh stack view`
+  at once and in `stk stack`, `stk info` and `--json` as `#N`; `stk sync` asks
+  GitHub about them and marks the merged ones. The pull requests of a stack
+  are linked as a GitHub stack through `gh stack link`, and no stack comment
+  is written — GitHub shows the stack on each pull request already.
+- **A stack on GitHub can be brought in whole.** `stk track --from-pr <n>`
+  runs `gh stack checkout` for a pull request number, URL or stack number:
+  the branches are fetched and checked out, and `stk` tracks each with the
+  parent GitHub has for it.
+
+```console
+$ stk track --from-pr 11
+Running gh stack checkout 11...
+✓ Checked out stack #3 at feat/ui
+✓ Tracking feat/api with parent main (from gh stack)
+✓ Tracking feat/ui with parent feat/api (from gh stack)
+✓ gh stack tracking updated
+
+2 branch(es) tracked from the stack on GitHub.
+```
 
 ```console
 $ stk ss -pn
@@ -410,6 +440,7 @@ $ stk ss -pn
 ✓ Opened pull request #1 for sc-123/api onto main
 ✓ Pushed sc-123/service to origin (created)
 ✓ Opened pull request #2 for sc-123/service onto sc-123/api
+✓ gh stack tracking updated
 ✓ Linked #1, #2 as a stack on GitHub
 
 2 branch(es) pushed, 2 pull request(s) opened, linked as a stack on GitHub.
@@ -417,27 +448,38 @@ $ stk ss -pn
 
 The link is made by pull request **number**, never by branch name, so
 `gh stack link` neither pushes nor opens anything: `stk` has already done both,
-its own way, with its own lease. Everything else about `stk` is unchanged. The
-stack graph stays in your repository, `stk restack`, `stk sync` and navigation
-never call `gh stack`, and `gh stack` keeps no local state of its own that could
-disagree with `stk`'s.
+its own way, with its own lease. `--no-link` skips the link for one run.
 
-A GitHub stack is strictly linear. `stk`'s graph need not be, so what gets
-linked is the chain through the branch being submitted: everything below it,
-and above it only while each branch has exactly one child. Siblings are a stack
-of their own. The chain also stops below a branch with no pull request — one
-that adds no commits, say — because linking across that gap would have
-`gh stack` retarget the pull request above it onto the branch below, changing
-what its reviewer is looking at. A stack of one pull request is not linked, as
-it is not commented on.
+A `gh stack` stack is strictly linear and `stk`'s graph need not be, so where
+the graph forks the chain ends: each child of the fork begins a stack of its
+own whose trunk is the fork branch. Every branch is in exactly one `gh stack`
+stack and every parent is the graph's. On GitHub, what gets linked is the
+chain through the branch being submitted — everything below it, and above it
+while each branch has exactly one child. The chain also stops below a branch
+with no pull request, because linking across that gap would have `gh stack`
+retarget the pull request above it onto the branch below, changing what its
+reviewer is looking at. A stack of one pull request is not linked.
+
+What stays `stk`'s: pushing, rebasing, navigation and the working tree.
+`gh stack` has commands for all of them, but `stk`'s know the graph, keep a
+journal `stk continue` and `stk abort` can use, push under a lease on the
+commit they are replacing, and never push unless asked. Because the tracking
+is mirrored, `gh stack`'s versions work too, on the same stack.
 
 That the extension is installed is checked **before the first push**, like the
 login, so a run never publishes a stack it then cannot link. A repository
 without stacked pull requests enabled is reported by `gh stack` after the pull
 requests are open, and `stk` says so plainly — the pushes and pull requests
 stand, only the link is missing — along with how to go back to the comment.
-`--no-link` skips the link for one run; `stk doctor` reports a repository that
-has opted in without the extension to back it.
+`stk doctor` reports a repository that has opted in without the extension, and
+a mirror that has fallen out of step, which the next `stk sync` settles.
+
+`gh stack` reads its tracking from the main worktree's git directory alone, so
+that is where `stk` writes the mirror; `stk` itself works from any worktree.
+The file is written under `gh stack`'s own lock, so the two never race. A
+mirror that cannot be written — a newer `gh stack` schema, a lock held too
+long — is a warning, not a failure: `stk`'s own record is already made, and
+`stk doctor` reports the drift until the next change repairs it.
 
 ## Folding a stack
 
@@ -677,7 +719,7 @@ Per-command flags have short forms, scoped to their command the way git's are:
 ```text
 create   -f --from
 init     -t --trunk        -r --remote
-track    -p --parent
+track    -p --parent       (--from-pr has no short form)
 untrack  -p --reparent     -r --recursive
 move     -o --onto
 fold     -s --stack        -y --yes
@@ -907,6 +949,7 @@ Everything lives inside the repository and is shared by every worktree:
 | State | Where |
 | --- | --- |
 | trunk, default remote, autostash and GitHub stacks preferences, metadata version | `stk.*` in the repository git config |
+| mirror of the graph for `gh stack` (opt-in) | `<git-common-dir>/gh-stack`, `gh stack`'s own file |
 | branch identity and logical parent | `branch.<name>.stk-id` / `.stk-parent` |
 | protected base commits | `refs/stk/base/<branch-id>` |
 | operation snapshots | `refs/stk/snapshot/<op-id>/<branch-id>` |
@@ -974,6 +1017,7 @@ internal/git/           the only code that runs git
 internal/stack/         metadata and the in-memory graph
 internal/operations/    create, track, rename, move, fold, split, restack, submit, ready, sync, continue, abort
 internal/forge/         the only code that knows about GitHub, through gh
+internal/ghstack/       gh stack's local tracking file, read and written in step with the graph
 internal/config/        repository-wide settings
 internal/ui/            branch picker, prompts, tree rendering
 internal/output/        text and JSON output

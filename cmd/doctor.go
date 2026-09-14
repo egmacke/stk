@@ -230,6 +230,18 @@ func runDoctor() doctorReport {
 		add("base history valid", statusFail, "%s", strings.Join(badBase, ", "))
 	}
 
+	if cfg.GitHubStacks {
+		drift, err := operations.GHStackDrift(repo, g)
+		switch {
+		case err != nil:
+			add("gh stack tracking", statusWarn, "%v", err)
+		case drift != "":
+			add("gh stack tracking", statusWarn, "%s (any stk command that changes the stack, or stk sync, brings it back into step)", drift)
+		default:
+			add("gh stack tracking", statusOK, "in step with stk")
+		}
+	}
+
 	claimed := map[string]bool{}
 	for _, b := range g.Tracked {
 		claimed[b.ID] = true

@@ -118,6 +118,7 @@ func Create(env *Env, g *stack.Graph, opts CreateOptions) error {
 
 	env.Out.OK("Created %s from %s", opts.Name, parent.Name)
 	env.Out.OK("Parent: %s", parent.Name)
+	mirrorGHStack(env, ghSyncOptions{})
 	if opts.Checkout {
 		if err := Switch(env, opts.Name); err != nil {
 			return err
@@ -171,6 +172,7 @@ func Track(env *Env, g *stack.Graph, name, parentName string) error {
 		return err
 	}
 	env.Out.OK("Tracking %s with parent %s", child.Name, parent.Name)
+	mirrorGHStack(env, ghSyncOptions{})
 	return nil
 }
 
@@ -245,6 +247,11 @@ func Untrack(env *Env, g *stack.Graph, name string, opts UntrackOptions) error {
 		}
 		env.Out.OK("Untracked %s (git branch left in place)", t.Name)
 	}
+	var names []string
+	for _, t := range targets {
+		names = append(names, t.Name)
+	}
+	mirrorGHStack(env, ghSyncOptions{Untracked: names})
 	return nil
 }
 
@@ -305,6 +312,9 @@ func Rename(env *Env, g *stack.Graph, oldName, newName string, opts RenameOption
 	}
 	env.Out.Printf("Renamed:")
 	env.Out.Printf("    %s -> %s", oldName, newName)
+	// gh stack keys its tracking by name, so the rename is what it most
+	// needs to hear about.
+	mirrorGHStack(env, ghSyncOptions{Renames: map[string]string{oldName: newName}})
 
 	if moveRemote {
 		res := repo.RenameRemoteBranch(target.Remote, target.Name, newName)
@@ -428,6 +438,9 @@ func Move(env *Env, g *stack.Graph, name, ontoName string) error {
 		return err
 	}
 	env.Out.OK("Parent of %s is now %s", b.Name, newParent.Name)
+	// Recorded now rather than only after the restack, which may stop on a
+	// conflict: the new parent is a fact whether or not the rebase is done.
+	mirrorGHStack(env, ghSyncOptions{})
 
 	// Reload so the graph reflects the new parent before restacking.
 	fresh, err := stack.Load(repo, env.Cfg)

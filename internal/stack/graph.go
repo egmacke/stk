@@ -12,6 +12,16 @@ import (
 // can never collide with a real branch.
 const TrunkID = "@trunk"
 
+// PullRequest is what gh stack's tracking records about a branch's pull
+// request. stk stores nothing about pull requests itself; this is read from
+// gh stack's file when the repository has opted into GitHub stacks, and is
+// nil otherwise.
+type PullRequest struct {
+	Number int
+	URL    string
+	Merged bool
+}
+
 // Branch is one node of the stack graph.
 type Branch struct {
 	ID   string
@@ -37,6 +47,10 @@ type Branch struct {
 
 	IsTrunk bool
 	Tracked bool
+
+	// PR is the pull request gh stack's tracking knows for the branch, when
+	// the repository keeps that tracking in step with stk.
+	PR *PullRequest
 
 	// Problems recorded during reconciliation.
 	Orphaned    bool // logical parent no longer exists

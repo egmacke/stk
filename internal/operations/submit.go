@@ -138,6 +138,12 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		}
 	}
 
+	if opts.Pull {
+		// What this run learned about the pull requests goes into gh stack's
+		// tracking, so gh stack view shows them without a sync of its own.
+		mirrorGHStack(env, ghSyncOptions{PullRequests: prs.byBranch})
+	}
+
 	commented := 0
 	stacked := false
 	if opts.Pull && target.Tracked {

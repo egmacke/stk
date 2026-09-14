@@ -130,6 +130,58 @@ func (g *GH) exec(full ...string) (string, error) {
 // prFields are the pull request fields stk reads.
 const prFields = "number,url,title,isDraft,state,baseRefName,headRefName"
 
+// interactive runs gh with the process's own stdio attached, for the gh stack
+// commands that talk to the user themselves: they print progress, and may ask
+// a question stk cannot answer for them.
+func (g *GH) interactive(full ...string) error {
+	if g.Verbose && g.Log != nil {
+		fmt.Fprintf(g.Log, "+ gh %s\n", strings.Join(full, " "))
+	}
+	cmd := exec.Command("gh", full...)
+	cmd.Dir = g.Dir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+	code := -1
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	}
+	return &CommandError{Args: full, ExitCode: code, Message: err.Error()}
+}
+
+// CheckoutStack runs gh stack checkout for a pull request number, pull request
+// URL or stack number: gh stack discovers the stack on GitHub, fetches its
+// branches, records the stack in its local tracking and checks out the branch
+// asked for.
+//
+// It runs with the terminal attached, because gh stack reports its own
+// progress and, when a stack it already tracks locally does not match the one
+// on GitHub, asks how to resolve that.
+func (g *GH) CheckoutStack(ref string) error {
+	return g.interactive("stack", "checkout", ref)
+}
+
+// PullRequestState returns the state of a pull request by number: OPEN, MERGED
+// or CLOSED.
+func (g *GH) PullRequestState(number int) (string, error) {
+	out, err := g.run("pr", "view", fmt.Sprintf("%d", number), "--json", "state")
+	if err != nil {
+		return "", err
+	}
+	var pr struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		return "", fmt.Errorf("reading gh pr view output: %w", err)
+	}
+	return pr.State, nil
+}
+
 // HasStackExtension reports whether the gh stack extension is installed.
 //
 // gh extension list prints one extension per line as "gh <name> <repo>

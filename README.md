@@ -62,7 +62,7 @@ stk restack
 | --- | --- |
 | `stk init` | Record trunk and the default remote |
 | `stk create [branch] [--from <parent>]` | Create a branch and record its parent |
-| `stk checkout [branch]`, `stk co` | Switch branches; interactive picker with no argument |
+| `stk checkout [branch]`, `stk co` | Switch branches; interactive picker with no argument; fetches a branch only the remote has |
 | `stk show` | The same viewer, without implying checkout is the goal |
 | `stk stack [--all] [--json]` | Print the current stack |
 | `stk info [branch] [--json]` | Everything stk knows about a branch |

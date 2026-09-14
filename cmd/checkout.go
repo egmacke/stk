@@ -29,7 +29,7 @@ func newCheckoutCmd() *cobra.Command {
 			if len(args) == 1 {
 				b, ok := a.Graph.Resolve(args[0])
 				if !ok {
-					return fmt.Errorf("branch %q does not exist", args[0])
+					return checkoutRemote(a, args[0])
 				}
 				return switchTo(a, b)
 			}
@@ -54,6 +54,22 @@ func newCheckoutCmd() *cobra.Command {
 	}
 	stash.register(cmd)
 	return cmd
+}
+
+// checkoutRemote handles a name that is no local branch. Somebody else may
+// have pushed it, so stk looks on the remote before declaring it unknown.
+func checkoutRemote(a *app, name string) error {
+	found, err := operations.CheckoutRemote(a.Env, name)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if remote := a.Cfg.Remote; remote != "" && a.Repo.RemoteExists(remote) {
+		return fmt.Errorf("branch %q does not exist locally or on %s", name, remote)
+	}
+	return fmt.Errorf("branch %q does not exist", name)
 }
 
 // switchTo checks out a branch, explaining git's worktree restriction rather

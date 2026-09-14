@@ -67,7 +67,7 @@ func TestSyncDetectsMergedBranches(t *testing.T) {
 	r.stk("checkout", "main")
 
 	out := r.stk("--no-interactive", "sync", "--no-restack")
-	requireContains(t, out, "The following branches are fully contained in main:")
+	requireContains(t, out, "The following branches add nothing to main:")
 	requireContains(t, out, "merged")
 	requireContains(t, out, "re-run with --cleanup")
 	if !r.branchExists("merged") {
@@ -214,6 +214,32 @@ func TestSyncNeverPushes(t *testing.T) {
 
 	r.stk("--no-interactive", "sync", "--no-cleanup")
 	requireNotContains(t, r.git("ls-remote", "--heads", "origin"), "refs/heads/api")
+}
+
+func TestSyncCleansUpASquashMergedBranch(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.git("push", "-q", "origin", "api", "service")
+
+	// A squash merge: the content lands on trunk under a commit of its own,
+	// so api is no ancestor of main and ancestry alone cannot see the merge.
+	r.stk("checkout", "main")
+	r.git("merge", "-q", "--squash", "api")
+	r.git("commit", "-q", "-m", "Add api (#1)")
+	r.git("push", "-q", "origin", "main")
+	r.git("checkout", "-q", "service")
+	requireEqual(t, r.runIn(r.Root, "", "git", "merge-base", "--is-ancestor", "api", "main").Code, 1,
+		"api is deliberately not an ancestor of main")
+
+	// One sync is enough: the branch is gone and service sits on trunk.
+	out := r.stk("--no-interactive", "sync", "--cleanup")
+	requireContains(t, out, "add nothing to main")
+	requireContains(t, out, "Removed api")
+	requireContains(t, out, "Reparented service onto main")
+	requireEqual(t, r.branchExists("api"), false, "the squash-merged branch is gone")
+	requireEqual(t, r.parentOf("service"), "main", "service was reparented")
+	requireEqual(t, r.log("service")[0], "service", "service kept its own commit")
+	requireEqual(t, r.log("service")[1], "Add api (#1)", "service sits on the squashed commit")
 }
 
 func TestSyncRefusesDirtyWorktreeWithNoAutostash(t *testing.T) {

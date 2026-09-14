@@ -85,6 +85,12 @@ type PullRequest struct {
 	Title   string `json:"title"`
 	IsDraft bool   `json:"isDraft"`
 	State   string `json:"state"`
+	// Base is the branch the pull request is opened against, which stk keeps
+	// pointing at the stack parent.
+	Base string `json:"baseRefName"`
 }
+
+// IsMerged reports whether the pull request has already landed.
+func (pr *PullRequest) IsMerged() bool { return pr.State == "MERGED" }
 
 func (pr *PullRequest) String() string { return fmt.Sprintf("#%d", pr.Number) }

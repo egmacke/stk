@@ -72,6 +72,7 @@ stk restack
 | `stk untrack [branch]` | Drop metadata; the git branch is never deleted |
 | `stk rename [old] [new]` | Rename without breaking the stack |
 | `stk move [branch] [--onto <p>]` | Re-parent a branch and restack above it |
+| `stk fold [branch] [--into <b>\|--stack]` | Collapse stacked branches into one |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk submit [branch] [--pull] [--draft] [--stack]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
 | `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
@@ -193,6 +194,7 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | `--draft` | `-d` | open every new pull request as a draft |
 | `--draft-from <branch>` | | open that branch and everything above it as drafts |
 | `--draft-branch <branch>` | | open just that branch as a draft; repeatable |
+| `--update` | `-u` | refresh the pull requests that already exist; open none |
 | `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
 | `--no-comment` | | leave the stack comment on each pull request alone |
@@ -207,6 +209,32 @@ commits; press enter to accept an offer. Without a terminal, `--pull` needs
 A pull request cannot be based on a branch the remote does not have, so
 ancestors that have never been pushed are pushed first — they are not
 proposed, only published. `--stack` is what proposes the whole chain.
+
+### Refreshing without proposing
+
+`--update` (`-u`) pushes and brings the pull requests that already exist up to
+date, but never opens one. It is the shape of a republish after a restack:
+
+```console
+$ stk ss -u
+✓ Pushed sc-123/api to origin (forced)
+✓ Pull request #1 was refreshed for sc-123/api
+    https://github.com/acme/tool/pull/1
+✓ Pushed sc-123/service to origin (forced)
+✓ Pull request #2 was refreshed for sc-123/service
+⊘ sc-123/ui has no pull request; --update opens none
+
+3 branch(es) pushed, 2 pull request(s) refreshed.
+```
+
+Because nothing is opened, there is nothing to ask about: no title, no body,
+no draft question, so `-u` needs no terminal and no `-n`. It also pushes only
+the branches in scope — a plain `stk submit` publishes unpushed ancestors so a
+new pull request has a base, and with `--update` there is no new pull request
+to give one. A draft flag alongside `-u` is an error rather than a no-op.
+
+`stk` says which of the two things happened to each pull request: *refreshed*
+when the push moved the branch under it, *already open* when nothing moved.
 
 ### Ready and draft
 
@@ -275,6 +303,21 @@ sits:
 > Each pull request is based on the one above it in this list, so review and
 > merge from the top down.
 
+**A pull request that has landed stays in the list.** By the time one merges
+its branch is gone from the local graph, so `stk` reads its own previous
+comment to recover the shape of the stack and keeps the entry where it was,
+labelled:
+
+> ### Stack
+>
+> 1. #1 `sc-123/api` — merged
+> 2. #2 `sc-123/service` ← this pull request
+> 3. #3 `sc-123/ui`
+
+An entry whose pull request was **closed** is kept the same way. One that is
+still **open** but has left the stack — moved onto another parent, say — is
+dropped instead: that is somebody else's stack to describe.
+
 It is written once and then edited in place — add a branch and every existing
 comment is rewritten, not duplicated. `stk` finds its own comment by a hidden
 marker and addresses the edit by that comment's id, so a comment somebody else
@@ -285,11 +328,33 @@ no reason.
 A stack of one pull request gets no comment. `--no-comment` skips the whole
 business.
 
-An **open pull request is never edited**: `stk` pushes the branch, prints the
-existing PR and leaves its title, body and draft state alone, because someone
-may have rewritten them in the browser. The stack comment is the one thing
-`stk` maintains, and it is a comment rather than an edit to the description for
-exactly that reason.
+An open pull request's **title, body and draft state are never edited**: `stk`
+pushes the branch, prints the existing PR and leaves them alone, because
+someone may have rewritten them in the browser. The stack comment is a comment
+rather than an edit to the description for exactly that reason.
+
+Its **base** is a different matter, and `stk` does keep that in step. A base is
+structural — it is what makes a stacked pull request show only its own commits
+— so when the stack changes shape under it, `stk` retargets it:
+
+```console
+$ stk ss -u
+✓ Retargeted #3 from sc-123/service onto sc-123/api
+✓ Pull request #3 was refreshed for sc-123/ui
+```
+
+Without that, a `stk move`, a `stk fold`, or a merged branch below leaves the
+pull request pointing at a branch that has moved or gone, and GitHub then
+computes the diff from a common ancestor further back — so the review shows
+commits that belong to somebody else's pull request.
+
+A branch whose pull request has already **merged** is never proposed again:
+
+```console
+$ stk submit -p
+⊘ sc-123/api was merged as #1; not opening another
+    Remove the branch with stk sync --cleanup
+```
 
 ```console
 $ stk submit -p
@@ -316,6 +381,68 @@ Log in with:
 
 Nothing about a pull request is stored in the repository — `stk` keeps no PR
 numbers, no status and no token.
+
+## Folding a stack
+
+Sometimes a stack turns out to be one change. `stk fold` collapses a run of
+branches into the lowest one:
+
+```console
+$ stk fold --into sc-123/api
+Folding into sc-123/api:
+
+    sc-123/service   1 commit(s), deleted
+    sc-123/ui        2 commit(s), deleted
+
+sc-123/api keeps its own base and ends up with 4 commit(s).
+sc-123/polish is reparented onto sc-123/api.
+
+Fold 2 branch(es) into sc-123/api? (Y/n)
+✓ sc-123/api now ends at 6f46091
+✓ Reparented sc-123/polish onto sc-123/api
+✓ Folded and deleted sc-123/ui (was 6f46091)
+✓ Folded and deleted sc-123/service (was 2d5cb8f)
+```
+
+| Command | Effect |
+| --- | --- |
+| `stk fold` | the current branch into its parent |
+| `stk fold --into <branch>` | everything from here down into that branch |
+| `stk fold --stack`, `-s` | the whole stack into its lowest branch |
+| `--yes`, `-y` | do not ask before deleting |
+| `--close-pulls` | close the folded branches' pull requests too |
+
+**Nothing is squashed and nothing is rebased.** In a consistent stack the top
+branch already contains every commit below it, so a fold only fast-forwards
+the surviving branch's ref up to it — which is also how `stk` can prove the
+fold loses nothing. A stack that needs a restack is refused rather than
+folded:
+
+```console
+$ stk fold
+stk: sc-123/ui does not contain sc-123/service, so folding would rewrite history
+
+Restack the stack first:
+
+    stk restack
+```
+
+The commits keep their identity, so the folded branch names are the only thing
+lost — and `stk` prints the command that brings each one back:
+
+```text
+Recover a folded branch with:
+
+    git branch sc-123/ui 6f46091
+```
+
+A branching stack cannot be folded into one branch, and `stk` says so rather
+than choosing a side. Branches held by another worktree are refused too. The
+remote is untouched: publish the result with `stk submit`, which force-pushes
+the survivor under a lease. With `--close-pulls` the folded branches' pull
+requests are closed with a comment pointing at the one that absorbed them;
+their remote branches are left alone, since a closed pull request can be
+reopened and a deleted branch cannot.
 
 ## Status markers
 
@@ -357,8 +484,10 @@ init     -t --trunk        -r --remote
 track    -p --parent
 untrack  -p --reparent     -r --recursive
 move     -o --onto
+fold     -s --stack        -y --yes
 restack  -u --up           -o --only
 submit   -p --pull         -d --draft       -n --no-prompt   -s --stack
+         -u --update
 ready    -s --stack
 sync     -s --stack
 stack    -a --all          -l --legend      -j --json
@@ -377,7 +506,8 @@ stk create api -fmain  # --from main, value attached
 
 `--no-checkout`, `--no-select`, `--no-restack`, `--no-cleanup`, `--cleanup`,
 `--autostash`, `--no-autostash`, `--no-comment`, `--draft-from`,
-`--draft-branch`, `--undo` and `--rebase-merges` have none: a slipped letter
+`--draft-branch`, `--undo`, `--into`, `--close-pulls` and `--rebase-merges`
+have none: a slipped letter
 should not disable a safety, delete a branch, move someone's uncommitted work
 or change what a reviewer is looking at.
 
@@ -469,6 +599,39 @@ strand them: `stk continue` restores them when the restack finishes, and
 paused they live in `refs/stk/autostash/<id>` rather than only in the stash
 reflog, and `stk doctor` reports any that a killed `stk` left behind.
 
+## Merged branches
+
+`stk sync` offers to remove branches that add nothing to trunk. Two things
+count as merged, because the forges do both:
+
+| How it landed | How `stk` sees it |
+| --- | --- |
+| merge or rebase | the branch's commits are ancestors of trunk |
+| **squash** | the commits are not in trunk, but the branch's content is identical to it |
+
+The squash case is the one a stacking tool has to get right: GitHub's default
+lands a stack's bottom branch as a single new commit, so ancestry alone shows
+nothing, and without the content check the branch would only be noticed on the
+*next* sync — after a restack had rebased it into emptiness.
+
+Restacking removes merged work from the branches above too, without being
+asked: `git rebase` drops a commit whose change is already upstream, so a
+squash-merged commit does not come back as a duplicate on its children.
+
+```console
+$ stk sync --cleanup
+✓ main fast-forwarded by 1 commit(s)
+
+The following branches add nothing to main:
+
+    sc-123/api
+
+✓ Reparented sc-123/service onto main
+✓ Removed sc-123/api
+```
+
+Branches checked out in a worktree are never deleted, only reported.
+
 ## How the metadata is stored
 
 Everything lives inside the repository and is shared by every worktree:
@@ -498,7 +661,9 @@ commits belong to the branch.
 
 - never silently overwrites a diverged trunk;
 - never chooses a stack parent for you;
-- never deletes a branch git cannot prove is contained in trunk;
+- never deletes a branch git cannot prove adds nothing to trunk — either its
+  commits are already in trunk, or its content is identical to trunk's — or,
+  when folding, that its commits live on in the branch that absorbs it;
 - never deletes or rewrites a branch checked out in another worktree;
 - never loses your uncommitted changes: it parks them, puts them back, and
   leaves them in the stash list if they will not reapply (`--no-autostash` to
@@ -534,7 +699,7 @@ main.go                 entry point
 cmd/                    cobra commands; no direct git orchestration
 internal/git/           the only code that runs git
 internal/stack/         metadata and the in-memory graph
-internal/operations/    create, track, rename, move, restack, submit, ready, sync, continue, abort
+internal/operations/    create, track, rename, move, fold, restack, submit, ready, sync, continue, abort
 internal/forge/         the only code that knows about GitHub, through gh
 internal/config/        repository-wide settings
 internal/ui/            branch picker, prompts, tree rendering

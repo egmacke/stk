@@ -101,14 +101,27 @@ func (g *GH) exec(full ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// prFields are the pull request fields stk reads.
+const prFields = "number,url,title,isDraft,state,baseRefName"
+
 // OpenPullRequest returns the open pull request whose head is branch, or nil
 // when there is none.
 func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {
+	return g.pullRequest(branch, "open")
+}
+
+// LatestPullRequest returns the most recent pull request for a branch
+// whatever its state, so stk can tell "never proposed" from "already merged".
+func (g *GH) LatestPullRequest(branch string) (*PullRequest, error) {
+	return g.pullRequest(branch, "all")
+}
+
+func (g *GH) pullRequest(branch, state string) (*PullRequest, error) {
 	out, err := g.run("pr", "list",
 		"--head", branch,
-		"--state", "open",
+		"--state", state,
 		"--limit", "1",
-		"--json", "number,url,title,isDraft,state")
+		"--json", prFields)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +136,53 @@ func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {
 		return nil, nil
 	}
 	return &prs[0], nil
+}
+
+// PullRequestByNumber reads one pull request by number, whatever its state.
+//
+// It goes through REST because stk needs it for pull requests whose branch is
+// gone, which "gh pr list --head" can no longer find.
+func (g *GH) PullRequestByNumber(number int) (*PullRequest, error) {
+	out, err := g.api("GET", g.apiPath("/pulls/%d", number),
+		"--jq", `{number: .number, url: .html_url, title: .title, isDraft: .draft, baseRefName: .base.ref, state: (if .merged then "MERGED" else (.state | ascii_upcase) end)}`)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	var pr PullRequest
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		return nil, fmt.Errorf("reading gh api pull request output: %w", err)
+	}
+	return &pr, nil
+}
+
+// RetargetPullRequest points an open pull request at another base branch.
+//
+// The base is the one thing stk maintains on a pull request it did not open:
+// it is structural, not authored, and a stale base makes the diff show commits
+// that belong to another review.
+//
+// This goes through the REST endpoint rather than "gh pr edit", which fetches
+// organisation and team metadata over GraphQL and so demands a read:org scope
+// that changing a base does not need.
+func (g *GH) RetargetPullRequest(number int, base string) error {
+	_, err := g.api("PATCH", g.apiPath("/pulls/%d", number), "-f", "base="+base)
+	return err
+}
+
+// ClosePullRequest closes a pull request, saying why.
+//
+// The head branch is deliberately left on the remote: a closed pull request
+// can be reopened, and stk does not delete branches it did not create.
+func (g *GH) ClosePullRequest(number int, comment string) error {
+	args := []string{fmt.Sprintf("%d", number)}
+	if comment != "" {
+		args = append(args, "--comment", comment)
+	}
+	_, err := g.run("pr", "close", args...)
+	return err
 }
 
 // ReadyForReview takes a pull request out of draft, or with undo puts it back.

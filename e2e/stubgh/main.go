@@ -129,6 +129,10 @@ func main() {
 		createPR(args[2:])
 	case "pr ready":
 		readyPR(args[2:])
+	case "pr close":
+		closePR(args[2:])
+	case "pr edit":
+		editPR(args[2:])
 	default:
 		if args[0] == "api" {
 			api(args[1:])
@@ -151,22 +155,47 @@ func authStatus() {
 func listPRs(args []string) {
 	values, _ := flags(args)
 	head := values["head"]
+	wantAll := values["state"] == "all"
 	s := load()
 	for _, pr := range s.PRs {
-		if pr.Head == head {
-			out, _ := json.Marshal([]pullRequest{pr})
-			fmt.Println(string(out))
+		if pr.Head != head {
+			continue
+		}
+		if !wantAll && pr.State != "OPEN" {
+			continue
+		}
+		out, _ := json.Marshal([]pullRequest{pr})
+		fmt.Println(string(out))
+		return
+	}
+	fmt.Println("[]")
+}
+
+func editPR(args []string) {
+	values, _ := flags(args)
+	n := prNumber(args, values)
+	base := values["base"]
+	if base == "" {
+		fail("only --base is understood by the stub: %s", strings.Join(args, " "))
+	}
+	s := load()
+	for i := range s.PRs {
+		if s.PRs[i].Number == n {
+			s.PRs[i].Base = base
+			s.save()
 			return
 		}
 	}
-	fmt.Println("[]")
+	fail("no pull request %d", n)
 }
 
 func createPR(args []string) {
 	values, switches := flags(args)
 	s := load()
 	for _, pr := range s.PRs {
-		if pr.Head == values["head"] {
+		// GitHub refuses a second open pull request for the same head, but a
+		// closed or merged one is no obstacle.
+		if pr.Head == values["head"] && pr.State == "OPEN" {
 			fail("a pull request for %s already exists", pr.Head)
 		}
 	}
@@ -188,20 +217,7 @@ func createPR(args []string) {
 
 func readyPR(args []string) {
 	values, switches := flags(args)
-	number := ""
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") && values["repo"] != a {
-			number = a
-			break
-		}
-	}
-	if number == "" {
-		fail("no pull request number in: %s", strings.Join(args, " "))
-	}
-	n, err := strconv.Atoi(number)
-	if err != nil {
-		fail("bad pull request number %q", number)
-	}
+	n := prNumber(args, values)
 	s := load()
 	for i := range s.PRs {
 		if s.PRs[i].Number == n {
@@ -211,6 +227,51 @@ func readyPR(args []string) {
 		}
 	}
 	fail("no pull request %d", n)
+}
+
+func closePR(args []string) {
+	values, _ := flags(args)
+	n := prNumber(args, values)
+	s := load()
+	for i := range s.PRs {
+		if s.PRs[i].Number == n {
+			s.PRs[i].State = "CLOSED"
+			if c := values["comment"]; c != "" {
+				key := strconv.Itoa(n)
+				s.Comments[key] = append(s.Comments[key], comment{ID: s.NextComment, Body: c, Login: "tester"})
+				s.NextComment++
+			}
+			s.save()
+			return
+		}
+	}
+	fail("no pull request %d", n)
+}
+
+// prNumber picks the positional pull request number out of the arguments.
+func prNumber(args []string, values map[string]string) int {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		skip := false
+		for _, v := range values {
+			if v == a {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		n, err := strconv.Atoi(a)
+		if err != nil {
+			continue
+		}
+		return n
+	}
+	fail("no pull request number in: %s", strings.Join(args, " "))
+	return 0
 }
 
 // api answers the comment endpoints stk uses:
@@ -245,6 +306,47 @@ func api(args []string) {
 
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	s := load()
+	// One pull request by number, which stk reads for branches that are gone.
+	if method == "GET" && len(parts) == 5 && parts[3] == "pulls" {
+		n, err := strconv.Atoi(parts[4])
+		if err != nil {
+			fail("bad pull request number %q", parts[4])
+		}
+		for _, pr := range s.PRs {
+			if pr.Number == n {
+				out, _ := json.Marshal(pr)
+				fmt.Println(string(out))
+				return
+			}
+		}
+		fail("no pull request %d", n)
+	}
+	// The base of a pull request is changed through REST, because gh pr edit
+	// asks for scopes a base change does not need.
+	if method == "PATCH" && len(parts) == 5 && parts[3] == "pulls" {
+		base := ""
+		for i, a := range args {
+			if (a == "-f" || a == "--raw-field") && i+1 < len(args) {
+				if v, ok := strings.CutPrefix(args[i+1], "base="); ok {
+					base = v
+				}
+			}
+		}
+		n, err := strconv.Atoi(parts[4])
+		if err != nil {
+			fail("bad pull request number %q", parts[4])
+		}
+		for i := range s.PRs {
+			if s.PRs[i].Number == n {
+				s.PRs[i].Base = base
+				s.save()
+				out, _ := json.Marshal(s.PRs[i])
+				fmt.Println(string(out))
+				return
+			}
+		}
+		fail("no pull request %d", n)
+	}
 	switch {
 	case method == "GET" && len(parts) == 6 && parts[3] == "issues" && parts[5] == "comments":
 		// One JSON object per line, which is what gh's --jq projection emits.

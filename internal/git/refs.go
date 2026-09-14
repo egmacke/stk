@@ -65,6 +65,15 @@ func (repo *Repo) IsAncestor(a, b string) bool {
 	return repo.R.Run("merge-base", "--is-ancestor", a, b).OK()
 }
 
+// SameTree reports whether two commits have identical content.
+//
+// It is how stk recognises a squash merge: the content lands on trunk under a
+// new commit, so ancestry cannot see it, but the branch demonstrably adds
+// nothing that trunk lacks.
+func (repo *Repo) SameTree(a, b string) bool {
+	return repo.R.Run("diff", "--quiet", a, b).OK()
+}
+
 // MergeBase returns the best common ancestor of a and b.
 func (repo *Repo) MergeBase(a, b string) (string, error) {
 	res := repo.R.Run("merge-base", a, b)

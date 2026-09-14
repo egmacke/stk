@@ -204,6 +204,128 @@ func TestSubmitDraftFlagsNameARealBranch(t *testing.T) {
 	requireNotContains(t, r.ghCallLog(), "pr create")
 }
 
+func TestSubmitUpdateRefreshesOnlyWhatIsAlreadyOpen(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	// Only the bottom two are proposed; ui is pushed but has no pull request.
+	r.stk("submit", "api", "-pn")
+	r.stk("submit", "service", "-pn")
+
+	r.stk("checkout", "api")
+	r.amend("api.txt", "api amended\n", "api amended")
+	r.stk("restack")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Pushed api to origin (forced)")
+	requireContains(t, out, "Pull request #1 was refreshed for api")
+	requireContains(t, out, "Pull request #2 was refreshed for service")
+	requireContains(t, out, "ui has no pull request; --update opens none")
+	requireContains(t, out, "2 pull request(s) refreshed")
+	// The point of --update: nothing new is proposed. Looking ui up is fine;
+	// creating anything for it is not.
+	requireNotContains(t, r.ghCallLog(), "pr create --repo example/repo --head ui")
+	requireEqual(t, len(r.ghStubState().PRs), 2, "still two pull requests")
+}
+
+func TestSubmitUpdateNeedsNoTerminalAndNoDraftChoice(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+
+	// No prompting is possible, and none is needed. Nothing has moved since
+	// the last submit, so nothing claims to have been refreshed either.
+	out := r.stk("--no-interactive", "ss", "-u")
+	requireContains(t, out, "Pull request #1 is already open for api")
+	requireContains(t, out, "Nothing to push.")
+	requireNotContains(t, out, "Ready for review up to")
+
+	out = r.stkFail("ss", "-u", "-d")
+	requireContains(t, out, "--update opens no pull request")
+}
+
+func TestSubmitUpdateDoesNotPublishAncestors(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+
+	// service alone, with nothing on the remote yet: --update pushes only the
+	// branch named, because no pull request needs a base.
+	out := r.stk("submit", "service", "-u")
+	requireContains(t, out, "Pushed service to origin (created)")
+	requireNotContains(t, out, "Pushed api")
+	requireNotContains(t, remoteHeads(r), "refs/heads/api")
+	requireContains(t, out, "service has no pull request; --update opens none")
+}
+
+func TestSubmitRetargetsAStalePullRequestBase(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+	requireEqual(t, r.pullRequestBase(3), "service", "ui was opened against service")
+
+	// The stack changes shape under the pull requests.
+	r.stk("move", "ui", "--onto", "api")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Retargeted #3 from service onto api")
+	requireContains(t, out, "1 retargeted")
+	requireEqual(t, r.pullRequestBase(3), "api", "the base followed the stack")
+	// The edit carries the base and nothing else: title, body and draft state
+	// are the author's.
+	requireContains(t, r.ghCallLog(), "--method PATCH /repos/example/repo/pulls/3 -f base=api")
+	requireEqual(t, r.pullRequestBase(2), "api", "an already-correct base is left alone")
+}
+
+func TestSubmitRetargetsAfterAFold(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+
+	// service is folded away, so ui's pull request is based on a branch that
+	// no longer exists.
+	r.stk("checkout", "service")
+	r.stk("fold", "--yes")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Retargeted #3 from service onto api")
+	requireEqual(t, r.pullRequestBase(3), "api", "the base followed the fold")
+}
+
+func TestSubmitWillNotProposeAMergedBranchTwice(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+	r.mergedPullRequest(1, "api", "main", "Add api")
+
+	out := r.stk("submit", "-pn")
+	requireContains(t, out, "api was merged as #1; not opening another")
+	requireContains(t, out, "stk sync --cleanup")
+	requireNotContains(t, r.ghCallLog(), "pr create")
+}
+
+func TestSubmitOpensANewPullRequestAfterOneWasClosed(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+	r.existingPullRequest(1, "api", "main", "Add api")
+	r.setPullRequestState(1, "CLOSED")
+
+	out := r.stk("submit", "-pn")
+	requireContains(t, out, "#1 was closed for api; opening a new one")
+	requireContains(t, out, "Opened pull request #2")
+}
+
 func TestSubmitLeavesAnOpenPullRequestAlone(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
@@ -212,9 +334,17 @@ func TestSubmitLeavesAnOpenPullRequestAlone(t *testing.T) {
 	r.existingPullRequest(42, "api", "main", "Old title")
 
 	out := r.stk("submit", "-p", "-n")
-	requireContains(t, out, "Pull request #42 is already open for api")
+	// The push is what updated it, and stk says which of the two happened.
+	requireContains(t, out, "Pull request #42 was refreshed for api")
 	requireContains(t, out, "https://github.com/example/repo/pull/42")
 	requireNotContains(t, r.ghCallLog(), "pr create")
+
+	// Nothing about the pull request itself was edited.
+	requireEqual(t, r.ghStubState().PRs[0].Title, "Old title", "title untouched")
+
+	// A second run pushes nothing, so it does not claim to have refreshed it.
+	out = r.stk("submit", "-p", "-n")
+	requireContains(t, out, "Pull request #42 is already open for api")
 }
 
 func TestSubmitStackOpensOnePullRequestPerBranch(t *testing.T) {
@@ -252,12 +382,68 @@ func TestSubmitCommentsTheStackOnEveryPullRequest(t *testing.T) {
 		body := comments[0]
 		requireContains(t, body, "<!-- stk:stack -->")
 		requireContains(t, body, "1. #1 `api`")
+		requireContains(t, body, "merge them in the order")
 		requireContains(t, body, "2. #2 `service`")
 		requireContains(t, body, "3. #3 `ui`")
 		// Only the reader's own pull request is marked.
 		requireContains(t, body, "`"+branch+"` ← this pull request")
 		requireEqual(t, strings.Count(body, "← this pull request"), 1, "one marker on #"+strconv.Itoa(number))
 	}
+}
+
+func TestSubmitKeepsMergedPullRequestsInTheStackComment(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service", "ui")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+	requireContains(t, r.prComments(3)[0], "1. #1 `api`")
+
+	// api lands the way GitHub's squash button lands it, and sync removes the
+	// branch, so the local graph no longer knows #1 ever existed.
+	r.setPullRequestState(1, "MERGED")
+	r.stk("checkout", "main")
+	r.git("merge", "-q", "--squash", "api")
+	r.git("commit", "-q", "-m", "Add api (#1)")
+	r.git("checkout", "-q", "service")
+	// What sync --cleanup does once the merge lands, without the fetch: the
+	// remote here points at github.com so that gh can be given a repository.
+	r.stk("untrack", "api", "--reparent", "main")
+	r.git("branch", "-qD", "api")
+	r.stk("restack")
+	requireEqual(t, r.branchExists("api"), false, "the merged branch is gone")
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Updated the stack comment")
+
+	// The merged pull request stays named, in its old place, labelled.
+	body := r.prComments(2)[0]
+	requireContains(t, body, "1. #1 `api` — merged")
+	requireContains(t, body, "2. #2 `service` ← this pull request")
+	requireContains(t, body, "3. #3 `ui`")
+	requireContains(t, body, "The ones already in are kept in the list")
+}
+
+func TestSubmitDropsAStrayOpenPullRequestFromTheComment(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+
+	// service leaves this stack for another one, with its pull request open.
+	r.stk("move", "service", "--onto", "main")
+	r.stk("checkout", "api")
+	out := r.stk("submit", "-u")
+
+	// api's own stack is one pull request now, and the note it already has
+	// must not go on claiming otherwise: an open pull request that has left
+	// the stack is somebody else's business, so it is dropped rather than
+	// labelled.
+	requireContains(t, out, "Updated the stack comment on #1")
+	body := r.prComments(1)[0]
+	requireNotContains(t, body, "#2 `service`")
+	requireContains(t, body, "1. #1 `api`")
 }
 
 func TestSubmitLeavesAnUnchangedStackCommentAlone(t *testing.T) {

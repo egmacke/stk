@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func newSubmitCmd() *cobra.Command {
-	var pull, draft, noPrompt, wholeStack, noComment bool
+	var pull, draft, noPrompt, wholeStack, noComment, updateOnly bool
 	var draftFrom string
 	var draftBranches []string
 	cmd := &cobra.Command{
@@ -33,6 +34,9 @@ func newSubmitCmd() *cobra.Command {
 			"stk s is this command; stk ss is stk submit --stack, which refreshes every\n" +
 			"branch of the stack at once. Every other flag still applies, so stk ss -pn\n" +
 			"proposes the whole stack without asking anything.\n\n" +
+			"With --update stk refreshes only the pull requests that already exist and\n" +
+			"opens none, so a restacked stack can be republished without proposing work\n" +
+			"that is not ready to be looked at.\n\n" +
 			"Draft state is decided per branch. With none of the draft flags given, and\n" +
 			"more than one pull request to open, stk asks where the stack stops being\n" +
 			"ready: the branch you pick and everything below it open for review, and\n" +
@@ -50,9 +54,12 @@ func newSubmitCmd() *cobra.Command {
 			if err := drafts.Validate(); err != nil {
 				return err
 			}
-			if !drafts.Empty() {
-				// Every draft flag is about a pull request, so asking for one
-				// is asking for the other.
+			if updateOnly && !drafts.Empty() {
+				return errors.New("--update opens no pull request, so there is no draft state to set")
+			}
+			if !drafts.Empty() || updateOnly {
+				// Every draft flag is about a pull request, and so is
+				// --update, so asking for either is asking for --pull.
 				pull = true
 			}
 			a, err := open()
@@ -69,7 +76,7 @@ func newSubmitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if pull && !noPrompt && Interactive() {
+			if pull && !noPrompt && !updateOnly && Interactive() {
 				// Whether the questions are actually needed depends on what
 				// is already open, which only the operation knows; it fails
 				// before publishing anything if it needs an answer stk cannot
@@ -78,11 +85,12 @@ func newSubmitCmd() *cobra.Command {
 				a.Env.AskDraftCutLine = askDraftCutLine(a)
 			}
 			return operations.Submit(a.Env, a.Graph, target, operations.SubmitOptions{
-				Pull:      pull,
-				Drafts:    drafts,
-				NoPrompt:  noPrompt,
-				Stack:     wholeStack,
-				NoComment: noComment,
+				Pull:       pull,
+				Drafts:     drafts,
+				NoPrompt:   noPrompt,
+				Stack:      wholeStack,
+				NoComment:  noComment,
+				UpdateOnly: updateOnly,
 			})
 		},
 	}
@@ -91,6 +99,7 @@ func newSubmitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&draftFrom, "draft-from", "", "open `branch` and everything above it as drafts (implies --pull)")
 	cmd.Flags().StringArrayVar(&draftBranches, "draft-branch", nil, "open this `branch` as a draft; repeatable (implies --pull)")
 	cmd.Flags().BoolVarP(&noPrompt, "no-prompt", "n", false, "do not ask for a title, body or draft state; use the generated ones")
+	cmd.Flags().BoolVarP(&updateOnly, "update", "u", false, "refresh the pull requests that already exist; never open one (implies --pull)")
 	cmd.Flags().BoolVarP(&wholeStack, "stack", "s", false, "submit every branch in the stack, each onto its parent")
 	cmd.Flags().BoolVar(&noComment, "no-comment", false, "do not write or update the stack comment on the pull requests")
 	_ = cmd.RegisterFlagCompletionFunc("draft-from", branchNameCompletion)

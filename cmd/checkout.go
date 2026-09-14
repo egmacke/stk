@@ -138,5 +138,9 @@ func switchTo(a *app, b *stack.Branch) error {
 	}
 	// operations.Switch reports the switch itself, because with --autostash
 	// there are two more lines to interleave with it.
-	return operations.Switch(a.Env, b.Name)
+	if err := operations.Switch(a.Env, b.Name); err != nil {
+		return err
+	}
+	noteUpstreamGone(a, b)
+	return nil
 }

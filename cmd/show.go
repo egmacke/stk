@@ -85,6 +85,23 @@ func printTree(a *app, all bool) {
 	for _, line := range ui.RenderRows(rows, g.Current, g.Dirty()) {
 		a.Out.Raw("%s", line)
 	}
+	noteUpstreamGone(a, g.Current)
+}
+
+// noteUpstreamGone points out that the branch in hand no longer exists on the
+// remote, which is usually how a merged-and-deleted pull request shows up
+// locally. It only ever suggests stk sync; the deletion is sync's to offer.
+func noteUpstreamGone(a *app, b *stack.Branch) {
+	if b == nil || b.IsTrunk || !b.UpstreamGone {
+		return
+	}
+	remote := a.Cfg.Remote
+	if remote == "" {
+		remote = "the remote"
+	}
+	a.Out.Printf("")
+	a.Out.Printf("%s!  %s is gone from %s. Prune it with stk sync.",
+		output.SymAhead, b.Name, remote)
 }
 
 func buildStackJSON(a *app, all bool) output.StackJSON {

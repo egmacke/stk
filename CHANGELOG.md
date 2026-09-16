@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/egmacke/stk/compare/v1.1.0...v1.2.0) (2026-09-16)
+
+
+### Features
+
+* settle the stack on GitHub from stk sync ([#17](https://github.com/egmacke/stk/issues/17)) ([05d7c3d](https://github.com/egmacke/stk/commit/05d7c3da913a205fd065e0da3dde614107651da7))
+
 ## [1.1.0](https://github.com/egmacke/stk/compare/v1.0.0...v1.1.0) (2026-09-14)
 
 

@@ -36,9 +36,12 @@ type SyncOptions struct {
 // offers to remove branches already contained in trunk, and restacks what is
 // left. It never pushes.
 //
-// The one thing it changes on the forge is the base of a pull request left
-// sitting on a branch cleanup has just removed, which is structural rather
-// than authored and would otherwise show somebody else's commits.
+// Two things it does change on the forge, both structural rather than
+// authored: the base of a pull request left sitting on a branch cleanup has
+// just removed, which would otherwise show somebody else's commits, and, where
+// the repository has opted into GitHub stacks, the link between the pull
+// requests of a stack, which is how a stack linked outside this checkout is
+// found at all.
 func Sync(env *Env, opts SyncOptions) error {
 	repo := env.Repo
 	cfg := env.Cfg
@@ -112,6 +115,16 @@ func Sync(env *Env, opts SyncOptions) error {
 	if g, err = stack.Load(repo, cfg); err != nil {
 		return err
 	}
+	// Last of the three, because it is the only one that asks GitHub about the
+	// stack rather than about its branches. A stack linked outside this
+	// checkout — in the browser, or by a colleague — reaches gh stack's local
+	// tracking no other way, and the same link stk submit --pull ends with is
+	// what settles it. --no-pulls opts out, as it does everywhere else.
+	if !opts.NoPulls {
+		if target, ok := ghStackScope(g, opts); ok {
+			syncGitHubStacks(env, g, target)
+		}
+	}
 
 	if !opts.Restack {
 		return nil
@@ -140,6 +153,16 @@ func Sync(env *Env, opts SyncOptions) error {
 		Stash:       stash,
 	})
 	return err
+}
+
+// ghStackScope picks the stacks stk sync settles on GitHub: with --stack the
+// one holding the current branch, and otherwise every one in the graph. It is
+// false when --stack was given from no branch at all, which narrows to nothing.
+func ghStackScope(g *stack.Graph, opts SyncOptions) (*stack.Branch, bool) {
+	if !opts.StackOnly {
+		return nil, true
+	}
+	return g.Current, g.Current != nil
 }
 
 // updateTrunk fast-forwards the local trunk ref to its remote counterpart and

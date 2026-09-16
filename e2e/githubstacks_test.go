@@ -220,3 +220,89 @@ func TestDoctorIgnoresTheStackExtensionWhenGitHubStacksIsOff(t *testing.T) {
 	requireNotContains(t, out, "GitHub stacks")
 	requireNotContains(t, r.ghCallLog(), "extension list")
 }
+
+// stk sync settles the stack on GitHub too: gh stack's local tracking only
+// knows what happened in this checkout, so a stack linked anywhere else is
+// found by asking GitHub, which is what the link itself does.
+
+func TestSyncAdoptsAStackLinkedOnGitHub(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	// Published without the link, so this checkout has no record of a stack.
+	r.stk("ss", "-pn", "--no-link")
+	requireEqual(t, r.ghStackNumbers()[0], 0, "no stack recorded yet")
+
+	// Somebody links the two pull requests on GitHub itself.
+	r.linkOnGitHub(7, "main", 1, 2)
+
+	out := r.stk("sync", "--no-restack")
+	requireContains(t, out, "#1, #2 are a stack on GitHub")
+	requireEqual(t, r.ghStackNumbers()[0], 7, "the stack on GitHub is now recorded here")
+	// Adopted, not duplicated: GitHub still holds the one stack.
+	requireEqual(t, len(r.ghStubState().Stacks), 1, "one stack on GitHub")
+	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), "1 2", "its pull requests")
+}
+
+func TestSyncLinksAStackThatWasNeverLinked(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn", "--no-link")
+
+	out := r.stk("sync", "--no-restack")
+	requireContains(t, out, "#1, #2 are a stack on GitHub")
+	requireContains(t, r.ghCallLog(), "stack link --base main --remote origin 1 2")
+	requireEqual(t, len(r.ghStubState().Stacks), 1, "one stack on GitHub")
+}
+
+func TestSyncDoesNotAskAboutStacksWhenGitHubStacksIsOff(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("ss", "-pn")
+
+	out := r.stk("sync", "--no-restack")
+	requireNotContains(t, out, "stack on GitHub")
+	requireNotContains(t, r.ghCallLog(), "stack link")
+}
+
+func TestSyncNoPullsAsksGitHubNothing(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn", "--no-link")
+	r.truncateGHCallLog()
+
+	out := r.stk("sync", "--no-restack", "--no-pulls")
+	requireNotContains(t, out, "stack on GitHub")
+	requireNotContains(t, r.ghCallLog(), "stack link")
+}
+
+func TestSyncDryRunLinksNothing(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn", "--no-link")
+	r.truncateGHCallLog()
+
+	out := r.stk("sync", "--no-restack", "--dry-run")
+	requireContains(t, out, "would check the stacks on GitHub")
+	requireNotContains(t, r.ghCallLog(), "stack link")
+}
+
+func TestSyncLeavesAForkedGraphToSubmit(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("create", "other", "--from", "api")
+	r.commit("other.txt", "other\n", "other")
+	r.stk("ss", "-pn", "--no-link")
+	r.stk("checkout", "other")
+	r.stk("ss", "-pn", "--no-link")
+	r.truncateGHCallLog()
+
+	// gh stack link is additive, so linking api+service and then api+other
+	// would make one stack of all three. stk sync says nothing and leaves the
+	// choice to stk submit, which is given the branch.
+	out := r.stk("sync", "--no-restack")
+	requireNotContains(t, out, "are a stack on GitHub")
+	requireNotContains(t, r.ghCallLog(), "stack link")
+
+	// Named explicitly, one side of the fork is linked and the other is not.
+	out = r.stk("sync", "--no-restack", "--stack")
+	requireContains(t, out, "are a stack on GitHub")
+	requireEqual(t, len(r.ghStubState().Stacks), 1, "one stack on GitHub")
+	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), numbers([]int{prNumber(r, "api"), prNumber(r, "other")}), "the chain through the current branch")
+}

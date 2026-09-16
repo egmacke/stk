@@ -36,6 +36,7 @@ type comment struct {
 
 // ghStack is one stack linked through gh stack link.
 type ghStack struct {
+	Number int    `json:"number"`
 	Base   string `json:"base"`
 	Remote string `json:"remote"`
 	PRs    []int  `json:"prs"`
@@ -51,6 +52,7 @@ type remoteStack struct {
 
 type state struct {
 	NextPR       int                  `json:"nextPr"`
+	NextStack    int                  `json:"nextStack"`
 	NextComment  int64                `json:"nextComment"`
 	PRs          []pullRequest        `json:"prs"`
 	Comments     map[string][]comment `json:"comments"`
@@ -80,6 +82,9 @@ func load() *state {
 	}
 	if s.NextPR == 0 {
 		s.NextPR = 1
+	}
+	if s.NextStack == 0 {
+		s.NextStack = 1
 	}
 	if s.NextComment == 0 {
 		s.NextComment = 1001
@@ -251,15 +256,79 @@ func linkStack(args []string) {
 						s.Stacks[i].PRs = append(s.Stacks[i].PRs, n)
 					}
 				}
+				if s.Stacks[i].Number == 0 {
+					s.Stacks[i].Number = s.NextStack
+					s.NextStack++
+				}
 				s.save()
+				recordLocalStack(s.Stacks[i].Number, heads(s, s.Stacks[i].PRs))
 				fmt.Fprintf(os.Stderr, "Updated stack to %d PRs\n", len(s.Stacks[i].PRs))
 				return
 			}
 		}
 	}
-	s.Stacks = append(s.Stacks, ghStack{Base: values["base"], Remote: values["remote"], PRs: numbers})
+	stack := ghStack{Number: s.NextStack, Base: values["base"], Remote: values["remote"], PRs: numbers}
+	s.NextStack++
+	s.Stacks = append(s.Stacks, stack)
 	s.save()
+	recordLocalStack(stack.Number, heads(s, numbers))
 	fmt.Fprintf(os.Stderr, "Created stack with %d PRs\n", len(numbers))
+}
+
+// heads names the branches behind a list of pull requests.
+func heads(s *state, numbers []int) []string {
+	byNumber := map[int]pullRequest{}
+	for _, pr := range s.PRs {
+		byNumber[pr.Number] = pr
+	}
+	var out []string
+	for _, n := range numbers {
+		out = append(out, byNumber[n].Head)
+	}
+	return out
+}
+
+// recordLocalStack writes the stack's number into gh stack's local tracking,
+// which is what the real gh stack link does once GitHub has answered: the
+// stack is held on GitHub, and this is the only record of it in the checkout.
+func recordLocalStack(number int, branches []string) {
+	path := stackFilePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// Nothing tracked here yet, so there is no stack to number.
+		return
+	}
+	var local localStackFile
+	if err := json.Unmarshal(data, &local); err != nil {
+		fail("unreadable %s: %v", path, err)
+	}
+	wanted := map[string]bool{}
+	for _, b := range branches {
+		wanted[b] = true
+	}
+	for _, st := range local.Stacks {
+		entries, _ := st["branches"].([]any)
+		hit := false
+		for _, e := range entries {
+			m, _ := e.(map[string]any)
+			if name, _ := m["branch"].(string); wanted[name] {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			continue
+		}
+		st["number"] = number
+		out, err := json.MarshalIndent(local, "", "  ")
+		if err != nil {
+			fail("%v", err)
+		}
+		if err := os.WriteFile(path, out, 0o644); err != nil {
+			fail("%v", err)
+		}
+		return
+	}
 }
 
 func contains(list []int, n int) bool {

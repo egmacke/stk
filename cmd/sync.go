@@ -22,7 +22,13 @@ func newSyncCmd() *cobra.Command {
 			"The last two carry no proof that the commits live on anywhere else, so they\n" +
 			"are listed with what they would take with them and asked about separately.\n\n" +
 			"Branches left above a deleted one are reparented onto the nearest ancestor\n" +
-			"that survives, and their open pull requests are retargeted to match.",
+			"that survives, and their open pull requests are retargeted to match.\n\n" +
+			"With stk.githubStacks on, sync also settles the stack on GitHub itself:\n" +
+			"it links the pull requests of each stack that runs from trunk to a tip\n" +
+			"without forking, which is how a stack linked outside this checkout — in\n" +
+			"the browser, or by a colleague — is found and recorded here. Where the\n" +
+			"graph forks there is no single stack to link, and stk submit, which is\n" +
+			"given the branch, is where that choice is made. --no-pulls skips it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cleanup && noCleanup {

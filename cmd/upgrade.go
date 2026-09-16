@@ -9,7 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/egmacke/stk/internal/git"
 	"github.com/egmacke/stk/internal/release"
+	"github.com/egmacke/stk/internal/update"
 )
 
 func newUpgradeCmd() *cobra.Command {
@@ -63,7 +65,7 @@ func runUpgrade(ctx context.Context, opts upgradeOptions) error {
 		return err
 	}
 
-	var src release.Source
+	src := releaseSource()
 	tag := opts.Target
 	if tag == "" {
 		p.Printf("Checking for a newer version...")
@@ -129,6 +131,12 @@ func runUpgrade(ctx context.Context, opts upgradeOptions) error {
 
 	if err := release.Replace(dest, staged); err != nil {
 		return err
+	}
+	// The user has just upgraded, so any version they once declined is
+	// settled. Left behind, the record would silence the notice for a future
+	// release that happened to carry the same tag as the declined one.
+	if dir, err := workDir(); err == nil {
+		update.ClearSkipped(git.NewRunner(dir))
 	}
 	p.OK("Installed stk %s to %s", tag, dest)
 	return nil

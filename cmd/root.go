@@ -79,6 +79,9 @@ func NewRoot() *cobra.Command {
 				return errors.New("use either --interactive or --no-interactive, not both")
 			}
 			output.EnableColor(output.ShouldColor(ui.IsTerminal(), globals.noColor))
+			// Armed here because it needs the parsed flags, and because the
+			// request then runs alongside the command rather than before it.
+			armUpdateCheck(cmd)
 			return nil
 		},
 	}

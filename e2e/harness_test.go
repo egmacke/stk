@@ -59,12 +59,15 @@ type repo struct {
 	// bin is prepended to PATH, so a test can put a stub gh in front of any
 	// real one and assert on how stk called it.
 	bin string
+	// extraEnv is appended to the hermetic environment, for tests that need a
+	// variable of their own.
+	extraEnv []string
 }
 
 // env returns a hermetic environment: no user or system git config, a fixed
 // identity, and no editor or pager that could block.
 func (r *repo) env() []string {
-	return append(os.Environ(),
+	base := append(os.Environ(),
 		"PATH="+r.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GH_CALLS="+r.ghCalls(),
 		"GH_STATE="+r.ghState(),
@@ -84,7 +87,15 @@ func (r *repo) env() []string {
 		"EDITOR=true",
 		"TERM=dumb",
 		"NO_COLOR=1",
+		// Cleared rather than inherited: these decide whether stk checks for a
+		// new release, and the suite must behave the same on a laptop as it
+		// does inside CI, which sets CI itself. A test that wants one of them
+		// sets it through extraEnv, which is appended after and wins.
+		"CI=",
+		"STK_NO_UPDATE_CHECK=",
+		"STK_UPDATE_BASE_URL=",
 	)
+	return append(base, r.extraEnv...)
 }
 
 type result struct {

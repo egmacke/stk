@@ -303,6 +303,17 @@ func Compare(a, b string) (order int, ok bool) {
 	return 0, true
 }
 
+// IsReleaseTag reports whether v is a version stk can reason about: a plain
+// vX.Y.Z tag from a published release.
+//
+// A binary built from source carries "dev" or a git describe string, which
+// says nothing about where it sits relative to a release. Callers that would
+// otherwise tell the user they are out of date use this to stay quiet instead.
+func IsReleaseTag(v string) bool {
+	_, ok := parse(v)
+	return ok
+}
+
 // parse reads a vX.Y.Z tag. Anything carrying a prerelease or build suffix is
 // rejected rather than guessed at, since ordering those correctly needs the
 // full semver rules and stk does not publish them.

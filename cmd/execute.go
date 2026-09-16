@@ -46,6 +46,9 @@ func Execute(args []string) int {
 		}
 		return 1
 	}
+	// Only after a command that worked: an error is what the user needs the
+	// terminal for, and the offer keeps until the next successful run.
+	reportUpdate()
 	return 0
 }
 

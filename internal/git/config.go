@@ -68,3 +68,48 @@ func (repo *Repo) ConfigGetRegexp(pattern string) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// ConfigGetAny reads a config value from whichever scope defines it, letting
+// git resolve the precedence: a repository setting wins over the user's, which
+// wins over the system's.
+//
+// The repository-scoped readers above are for stk's own branch metadata, which
+// belongs to one repository and must never be answered by a global default.
+// This one is for standing user preferences, which a repository may still
+// override. Missing keys return "".
+func (r *Runner) ConfigGetAny(key string) string {
+	res := r.Run("config", "--get", key)
+	if !res.OK() {
+		return ""
+	}
+	return res.Out()
+}
+
+// ConfigBoolAny reads a config value from any scope as a git boolean,
+// returning def when no scope defines it.
+func (r *Runner) ConfigBoolAny(key string, def bool) bool {
+	res := r.Run("config", "--bool", "--get", key)
+	if !res.OK() {
+		return def
+	}
+	return res.Out() == "true"
+}
+
+// ConfigSetGlobal writes a value to the user's own config file.
+//
+// It is used for settings that describe this machine's stk rather than one
+// repository -- which release the user has already declined, and when stk last
+// looked -- so the answer follows the binary across every clone.
+func (r *Runner) ConfigSetGlobal(key, value string) error {
+	return r.Mutate("config", "--global", key, value).Error()
+}
+
+// ConfigUnsetGlobal removes a key from the user's own config file, tolerating
+// one that was never there.
+func (r *Runner) ConfigUnsetGlobal(key string) error {
+	res := r.Mutate("config", "--global", "--unset-all", key)
+	if res.OK() || res.ExitCode == 5 {
+		return nil
+	}
+	return res.Error()
+}

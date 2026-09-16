@@ -118,3 +118,22 @@ so `commit:` and `built:` are omitted rather than printed as "unknown".
 `checksums.txt` independently. Changing either shape breaks the ability of
 every already-installed copy of stk to upgrade itself, so change all three
 together, and only for a good reason.
+
+## Who finds out, and when
+
+Publishing a release is also how installed copies of stk learn there is one.
+Every stk that can prompt checks `/releases/latest` at most once an hour, in the
+background of a command, and offers the release to the user once. A user who
+declines records the tag in `stk.skipVersion` and is not asked about that
+version again — so a release is one offer per user, not a recurring prompt.
+
+Two consequences for anyone cutting a release:
+
+- **A tag people should not install is not free to withdraw.** Deleting the
+  release makes `/releases/latest` point at the previous tag again, but anyone
+  already offered the bad one has either taken it or declined it, and declining
+  is remembered. Ship a `fix:` rather than unpublish.
+- **`/releases/latest` is load-bearing.** The check reads the redirect it
+  serves, not the REST API, so it costs no rate limit and works for everyone
+  behind a shared address. A release that is left as a draft, or marked
+  pre-release, does not move that redirect and nobody is told about it.

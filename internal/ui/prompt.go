@@ -48,6 +48,58 @@ func Confirm(question string, defaultYes bool) (bool, error) {
 	}
 }
 
+// Answer is a reply to a yes/no question, keeping a deliberate "no" apart
+// from a prompt the user never really answered.
+type Answer int
+
+const (
+	// Yes is an explicit yes, or an empty line where yes is the default.
+	Yes Answer = iota
+	// No is an explicit "n" or "no".
+	No
+	// Unclear is anything else: a word that is neither, or an end of input
+	// where the user typed nothing at all.
+	//
+	// Callers that would otherwise record the answer treat it as no decision
+	// rather than as a no, so a dismissed prompt is asked again.
+	Unclear
+)
+
+// ConfirmAnswer asks a yes/no question and reports which of the three the
+// reply was.
+//
+// Confirm is the right call when a no and a shrug should do the same thing.
+// This one is for questions whose answer is written down, where telling them
+// apart is the whole point.
+func ConfirmAnswer(question string, defaultYes bool) (Answer, error) {
+	suffix := "(y/N)"
+	if defaultYes {
+		suffix = "(Y/n)"
+	}
+	line, eof, err := askLine(fmt.Sprintf("%s %s", output.Bold(question), output.Dim(suffix)))
+	if err != nil {
+		return Unclear, err
+	}
+	switch strings.ToLower(line) {
+	case "":
+		// End of input is the stream running out, not the user accepting the
+		// default: there was nobody there to accept it.
+		if eof {
+			return Unclear, nil
+		}
+		if defaultYes {
+			return Yes, nil
+		}
+		return No, nil
+	case "y", "yes":
+		return Yes, nil
+	case "n", "no":
+		return No, nil
+	default:
+		return Unclear, nil
+	}
+}
+
 // ReadLine asks an open question on stderr and returns the trimmed answer.
 //
 // An empty answer, or end of input, is treated as a cancellation rather than
@@ -118,10 +170,19 @@ func ReadParagraph(question, def string) (string, error) {
 
 // ask writes a question to stderr and reads one line of the answer.
 func ask(question string) (string, error) {
+	answer, _, err := askLine(question)
+	return answer, err
+}
+
+// askLine is ask, also reporting whether the read ended at end of input.
+//
+// The two are not the same: a user who presses return has answered with an
+// empty line, and a stream that has run out has not answered at all.
+func askLine(question string) (answer string, eof bool, err error) {
 	fmt.Fprintf(os.Stderr, "%s ", question)
-	line, err := stdin.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
+	line, readErr := stdin.ReadString('\n')
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return "", false, readErr
 	}
-	return strings.TrimSpace(line), nil
+	return strings.TrimSpace(line), errors.Is(readErr, io.EOF), nil
 }

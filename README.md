@@ -44,6 +44,49 @@ stk upgrade --check   # only say whether a newer one exists
 `stk upgrade` verifies downloads exactly as `install.sh` does, and needs no
 repository — it touches no branch, ref or metadata.
 
+### Being told about a new release
+
+`stk` also looks for a newer release on its own, at most once an hour, in the
+background of a command you were running anyway. When it finds one, it says so
+*after* the command has finished and offers to install it:
+
+```text
+✓ Restacked 3 branches
+
+stk v1.3.0 is available (you have v1.2.0).
+
+If you skip this, stk will not mention v1.3.0 again.
+You can upgrade at any time by running:
+
+    stk upgrade
+
+Upgrade now? (Y/n)
+```
+
+Answering `n` records that version and the offer is not repeated — but only
+that version. The next release is a new question, and `stk upgrade` still works
+at any time.
+
+The check never gets in the way. It runs concurrently with the command, is
+abandoned if the answer has not arrived a second after the work is done, and a
+release server that is unreachable is passed over in silence. It cannot fail a
+command or change its exit code, and it says nothing at all when:
+
+- the command failed, or stopped on a conflict — the terminal is for that;
+- there is nobody to ask: no terminal, or `--no-interactive`, or `CI` is set;
+- output was meant to be read by something else: `--quiet`, `--dry-run`, `--json`;
+- the command is `stk upgrade`, `stk version`, help, completion, or anything
+  passed through to git;
+- this build is not a published release, so there is no telling which is newer.
+
+To turn it off:
+
+```bash
+export STK_NO_UPDATE_CHECK=1          # one shell
+git config --global stk.updateCheck false   # for good
+git config stk.updateCheck false      # in one repository
+```
+
 With Go, which also works on platforms stk publishes no binaries for:
 
 ```bash
@@ -1029,6 +1072,17 @@ Because the repository config and refs live in the git *common* directory,
 every linked worktree sees the same stack graph. `stk init` creates no tracked
 files.
 
+Two keys are the exception, and live in your own `~/.gitconfig` rather than in
+a repository, because they describe the `stk` binary rather than any one clone:
+
+| State | Where |
+| --- | --- |
+| release you declined to upgrade to | `stk.skipVersion` |
+| when stk last looked for a release | `stk.lastUpdateCheck` |
+
+`stk.updateCheck` is read from whichever scope sets it, so a repository can
+turn the check off for everyone working in it.
+
 Branches are identified by a stable id rather than by name, so `git branch -m`
 leaves the graph intact. Each child also records the parent commit it was last
 valid against, which is what lets `stk` run a precise
@@ -1059,7 +1113,9 @@ commits belong to the branch.
   to move or remove a remote branch, and never force-pushes without a lease on
   what it is replacing;
 - never merges, and never edits the title, body or draft state of a pull
-  request it did not open in that run — only the base, which is structural.
+  request it did not open in that run — only the base, which is structural;
+- never replaces its own binary without asking, and never asks twice about a
+  release you turned down.
 
 When a restack hits a conflict it stops, tells you exactly what to do, and
 keeps a journal so `stk continue` resumes the *original* scope and `stk abort`
@@ -1088,6 +1144,7 @@ internal/operations/    create, track, rename, move, fold, split, restack, submi
 internal/forge/         the only code that knows about GitHub, through gh
 internal/ghstack/       gh stack's local tracking file, read and written in step with the graph
 internal/config/        repository-wide settings
+internal/update/        the background check for a newer release
 internal/ui/            branch picker, prompts, tree rendering
 internal/output/        text and JSON output
 ```

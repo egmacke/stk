@@ -401,6 +401,36 @@ func (r *repo) seedRemoteStack(number int, base string, prs ...int) {
 	})
 }
 
+// linkOnGitHub tells the stub gh that these pull requests are already a stack
+// on GitHub, as if somebody had linked them in the browser or from another
+// checkout. Nothing is written to gh stack's local tracking, which is the
+// whole point: this checkout has no record of the stack.
+func (r *repo) linkOnGitHub(number int, base string, prs ...int) {
+	r.t.Helper()
+	r.editStubState(func(raw map[string]any) {
+		list, _ := raw["stacks"].([]any)
+		var nums []any
+		for _, n := range prs {
+			nums = append(nums, n)
+		}
+		raw["stacks"] = append(list, map[string]any{"number": number, "base": base, "remote": "origin", "prs": nums})
+		if next, _ := raw["nextStack"].(float64); int(next) <= number {
+			raw["nextStack"] = number + 1
+		}
+	})
+}
+
+// ghStackNumbers lists the stack number gh stack's local tracking records for
+// each stack, in order. Zero means the stack is not linked on GitHub.
+func (r *repo) ghStackNumbers() []int {
+	r.t.Helper()
+	var out []int
+	for _, s := range r.ghStack().Stacks {
+		out = append(out, s.Number)
+	}
+	return out
+}
+
 // seedPullRequest adds a pull request to the stub gh's store without stk
 // having opened it.
 func (r *repo) seedPullRequest(number int, head, base string) {
@@ -482,6 +512,15 @@ func (r *repo) logOutGH() {
 	}
 }
 
+// truncateGHCallLog forgets the calls made so far, so an assertion can speak
+// about one command rather than the whole test.
+func (r *repo) truncateGHCallLog() {
+	r.t.Helper()
+	if err := os.WriteFile(r.ghCalls(), nil, 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
 // ghCallLog returns every stub gh invocation, one per line.
 func (r *repo) ghCallLog() string {
 	r.t.Helper()
@@ -512,6 +551,7 @@ type ghStubState struct {
 		Login string `json:"login"`
 	} `json:"comments"`
 	Stacks []struct {
+		Number int    `json:"number"`
 		Base   string `json:"base"`
 		Remote string `json:"remote"`
 		PRs    []int  `json:"prs"`

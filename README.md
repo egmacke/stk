@@ -463,6 +463,28 @@ With that set, `stk` and `gh stack` describe one stack, kept in step by `stk`:
   runs `gh stack checkout` for a pull request number, URL or stack number:
   the branches are fetched and checked out, and `stk` tracks each with the
   parent GitHub has for it.
+- **A stack linked outside this checkout is found by `stk sync`.** `gh
+  stack`'s local tracking records only what happened here, so a stack linked
+  in the browser, by a colleague, or from another clone is invisible until
+  something asks GitHub itself. `stk sync` asks with the same `gh stack link`
+  that `stk submit --pull` ends with — pull request numbers, so nothing is
+  pushed and nothing is opened, and a run already stacked on GitHub is left as
+  it stands — and gh stack's tracking comes back to what GitHub holds.
+
+```console
+$ stk sync --no-restack
+Fetching origin...
+✓ main is already up to date
+Checking pull requests...
+✓ #1, #2 are a stack on GitHub
+```
+
+`stk sync` settles every stack that runs from trunk to a tip without forking.
+Where the graph forks there is no single stack to link — `gh stack link` is
+additive, so linking each side in turn would gather both into one stack that is
+the shape of neither — so `stk sync` says nothing and leaves the choice to
+`stk submit`, which is given the branch. `stk sync --stack` names one side the
+same way. `--no-pulls` skips the question entirely.
 
 ```console
 $ stk track --from-pr 11
@@ -984,8 +1006,10 @@ with no reachable GitHub remote does the same on its own, without failing the
 sync. `--cleanup` answers yes to both lists, `--no-cleanup` skips them.
 
 `stk sync` never pushes, so it never touches a remote branch — deleting one is
-`stk delete --remote`. Retargeting a survivor is the one thing it changes on
-the forge, and it changes nothing about the branch itself.
+`stk delete --remote`. Two things it does change on the forge, both structural
+rather than authored and neither touching a branch: the base of a survivor's
+pull request, and — with `stk.githubStacks` on — the link between the pull
+requests of a stack, which is what finds a stack linked outside this checkout.
 
 ## How the metadata is stored
 

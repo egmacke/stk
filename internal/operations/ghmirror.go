@@ -174,35 +174,23 @@ func adoptGHBranches(env *Env, g *stack.Graph, f *ghstack.File, untracked []stri
 	return adopted, nil
 }
 
-// ghChains decomposes the graph into the linear stacks gh stack can hold.
+// ghChains renders the graph as the linear stacks gh stack's file can hold.
 //
-// From each branch on trunk the chain runs upward while every branch has one
-// child. Where a branch forks, the chain ends there and each child begins a
-// stack of its own whose trunk is the fork: gh stack's stacks are strictly
-// linear, and this is the one decomposition in which every branch is in
-// exactly one stack and every stack's parent relationships are the graph's.
+// The decomposition is linearChains'; each run's trunk is the branch it hangs
+// off, which is trunk for a run starting on trunk and the fork branch for a
+// run starting above one.
 func ghChains(g *stack.Graph) []ghstack.Stack {
 	var out []ghstack.Stack
-	var walk func(start, trunk *stack.Branch)
-	walk = func(start, trunk *stack.Branch) {
+	for _, chain := range linearChains(g) {
+		trunk := g.Trunk
+		if p := chain[0].Parent; p != nil && !p.IsTrunk {
+			trunk = p
+		}
 		s := ghstack.Stack{Trunk: ghstack.BranchRef{Branch: trunk.Name, Head: trunk.SHA}}
-		cur := start
-		for {
-			s.Branches = append(s.Branches, ghstack.BranchRef{Branch: cur.Name, Base: cur.Base})
-			if len(cur.Children) != 1 {
-				break
-			}
-			cur = cur.Children[0]
+		for _, b := range chain {
+			s.Branches = append(s.Branches, ghstack.BranchRef{Branch: b.Name, Base: b.Base})
 		}
 		out = append(out, s)
-		if len(cur.Children) > 1 {
-			for _, c := range cur.Children {
-				walk(c, cur)
-			}
-		}
-	}
-	for _, root := range g.Roots() {
-		walk(root, g.Trunk)
 	}
 	return out
 }

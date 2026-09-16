@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/egmacke/stk/compare/v1.2.0...v1.3.0) (2026-09-16)
+
+
+### Features
+
+* offer an upgrade when a newer release is published ([#19](https://github.com/egmacke/stk/issues/19)) ([be7ba0e](https://github.com/egmacke/stk/commit/be7ba0ec73c11ce1b4aa757122a5aff18605b220))
+
 ## [1.2.0](https://github.com/egmacke/stk/compare/v1.1.0...v1.2.0) (2026-09-16)
 
 

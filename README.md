@@ -162,7 +162,7 @@ stk restack
 | `stk split [branch] [--at <commit>]` | Divide a branch into several stacked branches |
 | `stk delete [branch...] [-y] [--remote]` | Delete branches, and offer to delete their remote branches |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
-| `stk submit [branch] [--pull] [--draft] [--stack]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
+| `stk submit [branch] [--pull] [--draft] [--stack] [--force]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
 | `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
 | `stk sync [--stack] [--cleanup\|--no-cleanup] [--no-restack]` | Fetch, update trunk, prune finished branches, restack |
 | `stk continue` / `stk abort` | Resume or abandon an interrupted operation |
@@ -263,6 +263,34 @@ $ stk submit --stack
 ✓ Pushed sc-123/service to origin (forced)
 ```
 
+`--force` (`-f`) is the way past that lease. The remote branch is replaced
+with what you have, whatever it holds, and any commit on it that is not in
+yours goes with it:
+
+```console
+$ stk submit
+stk: pushing sc-123/api was refused
+
+origin/sc-123/api has moved since stk last saw it, so the force-with-lease was
+declined and nothing was overwritten. Fetch and restack, then submit again:
+
+    stk sync
+
+Or replace it with what you have, whatever it holds:
+
+    stk submit --force
+
+$ stk submit --force
+✓ Pushed sc-123/api to origin (forced, no lease)
+```
+
+`stk` says `forced, no lease` rather than `forced` so the two are never
+confused in a log. `-f` only ever changes a **diverged** branch: one that
+fast-forwards is pushed the same way with it or without it, one the remote
+already holds is still skipped, and a branch the remote has never seen is
+still just created. It is also the switch for a run that must not stop to ask
+anything, so it implies `-n`.
+
 ### Pull requests
 
 `--pull` (`-p`) also opens a pull request through the
@@ -285,6 +313,7 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | `--update` | `-u` | refresh the pull requests that already exist; open none |
 | `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
+| `--force` | `-f` | replace a diverged remote branch whatever it holds; implies `-n` |
 | `--no-comment` | | leave the stack comment on each pull request alone |
 | `--no-link` | | with `stk.githubStacks`, leave the stack on GitHub alone |
 
@@ -831,7 +860,7 @@ move     -o --onto
 fold     -s --stack        -y --yes
 restack  -u --up           -o --only
 submit   -p --pull         -d --draft       -n --no-prompt   -s --stack
-         -u --update
+         -u --update       -f --force
 ready    -s --stack
 sync     -s --stack
 stack    -a --all          -l --legend      -j --json
@@ -854,6 +883,11 @@ stk create api -fmain  # --from main, value attached
 have none: a slipped letter
 should not disable a safety, delete a branch, move someone's uncommitted work
 or change what a reviewer is looking at.
+
+`submit -f` is the deliberate exception. It is the flag you reach for when a
+lease keeps declining, which is the moment you least want to be typing
+`--force` in full — and unlike the flags above it does nothing at all unless
+the remote branch has diverged from yours.
 
 ## Missing arguments
 
@@ -1111,7 +1145,8 @@ commits belong to the branch.
 - never initialises a repository silently;
 - never pushes unless you run `stk submit`, or ask `stk rename` or `stk delete`
   to move or remove a remote branch, and never force-pushes without a lease on
-  what it is replacing;
+  what it is replacing — unless you drop the lease by name, with
+  `stk submit --force`;
 - never merges, and never edits the title, body or draft state of a pull
   request it did not open in that run — only the base, which is structural;
 - never replaces its own binary without asking, and never asks twice about a

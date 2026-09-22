@@ -29,6 +29,11 @@ type SubmitOptions struct {
 	UpdateOnly bool
 	// NoLink leaves the stack on GitHub alone when stk.githubStacks is on.
 	NoLink bool
+	// Force replaces a diverged remote branch whatever it holds, instead of
+	// taking a lease on the commit stk last published there. It is the only
+	// way past a lease that keeps being declined, and it can overwrite work
+	// stk has never seen.
+	Force bool
 }
 
 // PullRequestText is how the command layer collects a title and body. The
@@ -104,7 +109,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 	refreshed := 0
 	retargeted := 0
 	for _, b := range plan {
-		outcome, err := pushBranch(env, remote, b)
+		outcome, err := pushBranch(env, remote, b, opts.Force)
 		if err != nil {
 			return err
 		}
@@ -265,14 +270,15 @@ func openForge(env *Env, remote string) (*forge.GH, error) {
 }
 
 // pushBranch sends one branch to the remote, replacing a diverged remote
-// branch only under a lease.
-func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, error) {
+// branch only under a lease unless force says otherwise.
+func pushBranch(env *Env, remote string, b *stack.Branch, force bool) (git.PushOutcome, error) {
 	repo := env.Repo
 	if b.SHA == "" {
 		return git.PushCurrent, fmt.Errorf("branch %q has no commits", b.Name)
 	}
 	remoteSHA, exists := repo.RemoteBranchSHA(remote, b.Name)
 	lease := ""
+	forcing := false
 	outcome := git.PushCreated
 	switch {
 	case !exists:
@@ -295,6 +301,11 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 		return git.PushLinked, nil
 	case repo.IsAncestor(remoteSHA, b.SHA):
 		outcome = git.PushUpdated
+	case force:
+		// Only a diverged branch reaches here, so --force changes nothing
+		// about the cases above: it replaces the remote branch whatever it
+		// holds, which is the one way past a lease that keeps being declined.
+		outcome, forcing = git.PushForcedNoLease, true
 	default:
 		// Rewritten by a restack, most likely. The lease is what keeps this
 		// from overwriting someone else's work.
@@ -307,7 +318,7 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 		return outcome, nil
 	}
 
-	res := repo.Push(remote, b.Name, lease, !b.HasUpstream())
+	res := repo.Push(remote, b.Name, lease, forcing, !b.HasUpstream())
 	if !res.OK() {
 		echoGit(env, res)
 		if lease != "" {
@@ -315,7 +326,9 @@ func pushBranch(env *Env, remote string, b *stack.Branch) (git.PushOutcome, erro
 				"pushing %s was refused\n\n"+
 					"%s/%s has moved since stk last saw it, so the force-with-lease was\n"+
 					"declined and nothing was overwritten. Fetch and restack, then submit again:\n\n"+
-					"    stk sync",
+					"    stk sync\n\n"+
+					"Or replace it with what you have, whatever it holds:\n\n"+
+					"    stk submit --force",
 				b.Name, remote, b.Name)
 		}
 		return outcome, fmt.Errorf("pushing %s to %s failed", b.Name, remote)

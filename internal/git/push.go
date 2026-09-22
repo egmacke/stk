@@ -13,8 +13,12 @@ const (
 	PushCreated PushOutcome = "created"
 	// PushUpdated means the remote branch was fast-forwarded.
 	PushUpdated PushOutcome = "updated"
-	// PushForced means the remote branch had diverged and was replaced.
+	// PushForced means the remote branch had diverged and was replaced
+	// under a lease on the commit it was known to hold.
 	PushForced PushOutcome = "forced"
+	// PushForcedNoLease means the remote branch was replaced whatever it
+	// held, because the push was made with --force.
+	PushForcedNoLease PushOutcome = "forced, no lease"
 	// PushCurrent means the remote already had this commit.
 	PushCurrent PushOutcome = "current"
 	// PushLinked means nothing was sent: the commit was already published and
@@ -42,11 +46,19 @@ func (repo *Repo) RemoteBranchSHA(remote, branch string) (string, bool) {
 // replaced only when nobody else has touched it. setUpstream records the
 // remote branch as this branch's upstream.
 //
+// force replaces the remote branch whatever it holds, which is the only way
+// past a lease that keeps being declined. It stands in place of the lease
+// rather than alongside it: sending both would leave which one applied up to
+// git's argument order, and a caller asking to force has already decided.
+//
 // The branch is named explicitly, so pushing never depends on what this
 // worktree has checked out.
-func (repo *Repo) Push(remote, branch, lease string, setUpstream bool) Result {
+func (repo *Repo) Push(remote, branch, lease string, force, setUpstream bool) Result {
 	args := []string{"push"}
-	if lease != "" {
+	switch {
+	case force:
+		args = append(args, "--force")
+	case lease != "":
 		args = append(args, fmt.Sprintf("--force-with-lease=%s:%s", branch, lease))
 	}
 	if setUpstream {

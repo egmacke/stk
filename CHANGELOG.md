@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/egmacke/stk/compare/v1.3.0...v1.4.0) (2026-09-22)
+
+
+### Features
+
+* force a submit past the declined lease ([#21](https://github.com/egmacke/stk/issues/21)) ([dda7e0d](https://github.com/egmacke/stk/commit/dda7e0d1cb1712f841e8c5c880f02447fa3e6f91))
+
 ## [1.3.0](https://github.com/egmacke/stk/compare/v1.2.0...v1.3.0) (2026-09-16)
 
 

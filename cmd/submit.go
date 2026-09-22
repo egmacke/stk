@@ -13,7 +13,7 @@ import (
 )
 
 func newSubmitCmd() *cobra.Command {
-	var pull, draft, noPrompt, wholeStack, noComment, updateOnly, noLink bool
+	var pull, draft, noPrompt, wholeStack, noComment, updateOnly, noLink, force bool
 	var draftFrom string
 	var draftBranches []string
 	cmd := &cobra.Command{
@@ -24,6 +24,11 @@ func newSubmitCmd() *cobra.Command {
 			"not exist yet. A branch a restack has rewritten is pushed with\n" +
 			"--force-with-lease, so it is replaced only while nobody else has touched\n" +
 			"it.\n\n" +
+			"--force is what gets past that lease when it is in the way: the remote\n" +
+			"branch is replaced with what you have, whatever it holds, and any commit\n" +
+			"on it that is not in yours is lost. It is also the one switch that asks\n" +
+			"nothing, so it implies --no-prompt. A branch that fast-forwards is pushed\n" +
+			"the same way either way; --force only ever changes a diverged one.\n\n" +
 			"With --pull stk also opens a pull request through the GitHub CLI, based on\n" +
 			"the branch's stack parent rather than trunk. Ancestors that are not on the\n" +
 			"remote yet are pushed first, because a pull request cannot be based on a\n" +
@@ -51,6 +56,12 @@ func newSubmitCmd() *cobra.Command {
 				// The short form exists to say --stack; anything else on the
 				// line still applies.
 				wholeStack = true
+			}
+			if force {
+				// --force is the switch for a run that must go through
+				// without being held up, and a question it stops on would
+				// hold it up exactly as a declined lease does.
+				noPrompt = true
 			}
 			drafts := operations.DraftChoice{All: draft, From: draftFrom, Branches: draftBranches}
 			if err := drafts.Validate(); err != nil {
@@ -94,6 +105,7 @@ func newSubmitCmd() *cobra.Command {
 				NoComment:  noComment,
 				UpdateOnly: updateOnly,
 				NoLink:     noLink,
+				Force:      force,
 			})
 		},
 	}
@@ -104,6 +116,7 @@ func newSubmitCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&noPrompt, "no-prompt", "n", false, "do not ask for a title, body or draft state; use the generated ones")
 	cmd.Flags().BoolVarP(&updateOnly, "update", "u", false, "refresh the pull requests that already exist; never open one (implies --pull)")
 	cmd.Flags().BoolVarP(&wholeStack, "stack", "s", false, "submit every branch in the stack, each onto its parent")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace a diverged remote branch whatever it holds, and ask nothing (implies --no-prompt)")
 	cmd.Flags().BoolVar(&noComment, "no-comment", false, "do not write or update the stack comment on the pull requests")
 	cmd.Flags().BoolVar(&noLink, "no-link", false, "do not link the pull requests as a stack on GitHub (with stk.githubStacks)")
 	_ = cmd.RegisterFlagCompletionFunc("draft-from", branchNameCompletion)

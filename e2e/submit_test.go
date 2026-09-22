@@ -105,6 +105,104 @@ func TestSubmitRefusesWhenTheRemoteMovedUnderIt(t *testing.T) {
 	requireEqual(t, r.sha("refs/remotes/origin/api"), r.sha("refs/remotes/origin/api"), "local view unchanged")
 }
 
+func TestSubmitForceReplacesARemoteThatMovedUnderIt(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stk("submit")
+	movedRemoteBranch(r, "api", "someone else")
+
+	r.amend("api.txt", "api amended\n", "api amended")
+
+	// The lease declines first, and says what gets past it.
+	out := r.stkFail("submit")
+	requireContains(t, out, "stk submit --force")
+
+	out = r.stk("submit", "--force")
+	requireContains(t, out, "Pushed api to origin (forced, no lease)")
+	requireEqual(t, r.sha("refs/remotes/origin/api"), r.sha("api"), "remote replaced")
+	// The commit stk never saw is what --force was asked to discard.
+	requireNotContains(t, r.gitAt(r.Origin, "log", "--format=%s", "api"), "someone else")
+}
+
+func TestSubmitForceOnlyChangesADivergedBranch(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+
+	// A branch the remote has never seen is still just created...
+	out := r.stk("submit", "--force")
+	requireContains(t, out, "Pushed api to origin (created)")
+
+	// ...one that fast-forwards is still an update...
+	r.commit("more.txt", "more\n", "more api")
+	out = r.stk("submit", "--force")
+	requireContains(t, out, "Pushed api to origin (updated)")
+
+	// ...and one the remote already holds is still skipped, with no push.
+	out = r.stk("submit", "--force")
+	requireContains(t, out, "api is already on origin")
+	requireNotContains(t, out, "forced")
+}
+
+func TestSubmitForceImpliesNoPrompt(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stubGH()
+	r.useGitHubURL()
+
+	// Without a terminal, --pull alone cannot describe a pull request; -f is
+	// the switch that says to go ahead with the generated title and body.
+	out := r.stkFail("--no-interactive", "submit", "--pull")
+	requireContains(t, out, "cannot ask")
+
+	out = r.stk("--no-interactive", "submit", "--pull", "--force")
+	requireContains(t, out, "Opened pull request")
+	requireContains(t, r.ghCallLog(), "--title api --body - api")
+}
+
+func TestSubmitForceBundlesAsAShorthand(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stubGH()
+	r.useGitHubURL()
+	r.stk("submit", "--stack")
+	movedRemoteBranch(r, "service", "someone else")
+
+	r.stk("checkout", "api")
+	r.amend("api.txt", "api amended\n", "api amended")
+	r.stk("restack")
+
+	// -sfp as one token: the whole stack, forced, with pull requests.
+	out := r.stk("--no-interactive", "submit", "-sfp")
+	requireContains(t, out, "Pushed api to origin (forced, no lease)")
+	requireContains(t, out, "Pushed service to origin (forced, no lease)")
+	requireEqual(t, r.sha("refs/remotes/origin/service"), r.sha("service"), "remote replaced")
+}
+
+func TestSubmitForceDryRunPushesNothing(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stk("submit")
+	movedRemoteBranch(r, "api", "someone else")
+	r.amend("api.txt", "api amended\n", "api amended")
+
+	before := r.gitAt(r.Origin, "rev-parse", "api")
+	out := r.stk("--dry-run", "submit", "--force")
+	requireContains(t, out, "(dry-run) would push api to origin (forced, no lease)")
+	requireEqual(t, r.gitAt(r.Origin, "rev-parse", "api"), before, "remote untouched by a dry run")
+}
+
+// movedRemoteBranch pushes a commit to a branch from a second clone, leaving
+// this repository's remote-tracking ref pointing at what stk last published.
+// That stale view is exactly what the force-with-lease is taken against.
+func movedRemoteBranch(r *repo, branch, message string) {
+	r.t.Helper()
+	other := filepath.Join(filepath.Dir(r.Root), "other-"+branch)
+	r.runIn(filepath.Dir(r.Root), "", "git", "clone", "-q", r.Origin, other)
+	r.runIn(other, "", "git", "checkout", "-q", branch)
+	r.runIn(other, "", "git", "commit", "-q", "--allow-empty", "-m", message)
+	r.runIn(other, "", "git", "push", "-q", "origin", branch)
+}
+
 func TestSubmitPullOpensAPullRequest(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api", "service")

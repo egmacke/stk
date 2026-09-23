@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/egmacke/stk/compare/v1.6.0...v1.7.0) (2026-09-23)
+
+
+### Features
+
+* triage untracked branches, tracking or deleting each one ([#28](https://github.com/egmacke/stk/issues/28)) ([ab27e19](https://github.com/egmacke/stk/commit/ab27e1940096b62963c528c051a7df86a826f2d2))
+
 ## [1.6.0](https://github.com/egmacke/stk/compare/v1.5.0...v1.6.0) (2026-09-23)
 
 

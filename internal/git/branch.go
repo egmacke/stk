@@ -150,12 +150,23 @@ func (repo *Repo) IsClean() (bool, error) {
 }
 
 // RebaseInProgress reports whether this worktree is mid-rebase.
-func (repo *Repo) RebaseInProgress() bool {
-	res := repo.R.Run("rev-parse", "--git-path", "rebase-merge")
-	merge := res.Out()
-	res2 := repo.R.Run("rev-parse", "--git-path", "rebase-apply")
-	apply := res2.Out()
-	return pathExists(repo.Dir, merge) || pathExists(repo.Dir, apply)
+func (repo *Repo) RebaseInProgress() bool { return repo.RebaseInProgressIn("") }
+
+// RebaseInProgressIn is RebaseInProgress for another worktree of the same
+// repository. An empty dir means this one.
+func (repo *Repo) RebaseInProgressIn(dir string) bool {
+	return repo.gitPathExists(dir, "rebase-merge") || repo.gitPathExists(dir, "rebase-apply")
+}
+
+// gitPathExists reports whether a per-worktree git file, named the way git
+// itself resolves it, is present.
+func (repo *Repo) gitPathExists(dir, name string) bool {
+	r := repo.WorktreeRunner(dir)
+	res := r.Run("rev-parse", "--git-path", name)
+	if !res.OK() {
+		return false
+	}
+	return pathExists(r.Dir, res.Out())
 }
 
 // Fetch updates remote-tracking refs for one remote.
@@ -188,6 +199,16 @@ func (repo *Repo) Remotes() []string {
 
 // Rebase replays child's commits from oldBase onto newBase.
 func (repo *Repo) Rebase(newBase, oldBase, child string, rebaseMerges bool) Result {
+	return repo.RebaseIn("", newBase, oldBase, child, rebaseMerges)
+}
+
+// RebaseIn is Rebase run inside another worktree of the same repository, which
+// is the only way to rewrite a branch that worktree has checked out: git
+// refuses from anywhere else, and moving the ref behind its back would leave
+// its index and files describing a commit that is no longer the branch.
+//
+// An empty dir means this worktree.
+func (repo *Repo) RebaseIn(dir, newBase, oldBase, child string, rebaseMerges bool) Result {
 	args := []string{"rebase"}
 	if repo.SupportsNoUpdateRefs() {
 		// stk owns refs/stk/*; git must not rewrite refs on its own.
@@ -199,7 +220,7 @@ func (repo *Repo) Rebase(newBase, oldBase, child string, rebaseMerges bool) Resu
 	args = append(args, "--onto", newBase, oldBase, child)
 	// Captured rather than inherited: stk prints one line per branch, and
 	// git's own output is surfaced only when something goes wrong.
-	return repo.R.Capture(args...)
+	return repo.WorktreeRunner(dir).Capture(args...)
 }
 
 func (repo *Repo) String() string {

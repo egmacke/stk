@@ -921,3 +921,73 @@ func TestSubmitRefusesWhileAnOperationIsPaused(t *testing.T) {
 	out := r.stkFail("submit")
 	requireContains(t, out, "operation is already in progress")
 }
+
+// prTitleBranch builds one branch whose commit subjects differ from its name,
+// so the two sources a generated title can come from are told apart.
+func prTitleBranch(r *repo) {
+	r.t.Helper()
+	r.stk("create", "api")
+	r.commit("api.txt", "api\n", "Add the api endpoint")
+	r.commit("api2.txt", "more\n", "Tidy up the api endpoint")
+}
+
+func TestSubmitNoPromptTitlesAfterTheBranch(t *testing.T) {
+	r := newRepoWithRemote(t)
+	prTitleBranch(r)
+	r.stubGH()
+	r.useGitHubURL()
+
+	// No preference set: the branch name, which is what stk has always used.
+	r.stk("submit", "--pull", "--no-prompt")
+	requireContains(t, r.ghCallLog(), "--title api --body")
+}
+
+func TestSubmitPRTitleCommitTitlesAfterTheFirstCommit(t *testing.T) {
+	r := newRepoWithRemote(t)
+	prTitleBranch(r)
+	r.stubGH()
+	r.useGitHubURL()
+	r.git("config", "stk.prTitle", "commit")
+
+	// The first commit, not the latest: it is the one the branch was opened
+	// for, and it stays the title as more commits land on top.
+	r.stk("submit", "--pull", "--no-prompt")
+	requireContains(t, r.ghCallLog(), "--title Add the api endpoint --body")
+}
+
+func TestSubmitPRTitleBranchIsTheDefaultSpeltOut(t *testing.T) {
+	r := newRepoWithRemote(t)
+	prTitleBranch(r)
+	r.stubGH()
+	r.useGitHubURL()
+	r.git("config", "stk.prTitle", "branch")
+
+	r.stk("submit", "--pull", "--no-prompt")
+	requireContains(t, r.ghCallLog(), "--title api --body")
+}
+
+func TestSubmitPRTitleCommitLeavesThePromptOfferAlone(t *testing.T) {
+	r := newRepoWithRemote(t)
+	prTitleBranch(r)
+	r.stubGH()
+	r.useGitHubURL()
+	r.git("config", "stk.prTitle", "commit")
+
+	// The prompt has always offered the first commit subject, and the
+	// preference is about the title stk writes when it cannot ask.
+	res := r.stkAt(r.Root, "\n\n", "--interactive", "submit", "-p")
+	requireEqual(t, res.Code, 0, "submit succeeded")
+	requireContains(t, res.All(), "[Add the api endpoint]")
+}
+
+func TestPRTitleRejectsAnUnknownValue(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.git("config", "stk.prTitle", "subject")
+
+	// A misspelt preference is refused rather than quietly ignored, so it is
+	// not mistaken for one that was honoured.
+	out := r.stkFail("stack")
+	requireContains(t, out, `stk.prTitle is "subject"`)
+	requireContains(t, out, `it must be "branch" or "commit"`)
+}

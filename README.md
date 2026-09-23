@@ -264,6 +264,49 @@ With sibling branches, `stk restack` from `C` still processes `A`, `B`, `D`,
 `C` and `E` — the entire connected tree rooted at the lowest branch above
 trunk.
 
+### Branches in other worktrees
+
+A branch another worktree has checked out is still restacked, by `stk restack`
+and by `stk sync` alike. The rebase runs *inside* that worktree, which is the
+only way git will rewrite the branch at all, and means its index and files move
+with the ref instead of being left describing history that is no longer there.
+It is the same route `stk sync` takes to fast-forward a trunk checked out
+elsewhere. `stk` says where the work happened:
+
+```console
+$ stk restack
+
+Restacking the stack containing sc-123/api...
+
+✓ sc-123/api
+✓ sc-123/service in /home/you/work/wt-service
+✓ sc-123/ui
+
+2 restacked, 1 already current.
+```
+
+Two things stop it, and both leave the branch exactly where it was:
+
+- **Uncommitted changes there.** A working tree you are not standing in is not
+  `stk`'s to disturb, so the branch is skipped and everything above it is
+  reported blocked rather than rebased against uncertain state. The same goes
+  for a worktree part-way through a rebase, merge, cherry-pick, revert or
+  bisect.
+- **A conflict.** A conflict is only `stk`'s to pause where the journal lives —
+  `stk continue` and `stk abort` belong to one worktree, and a rebase left
+  paused in another would wedge a checkout you never pointed `stk` at. So the
+  rebase is undone there and the branch reported, for you to resolve where it
+  belongs:
+
+```text
+⊘ sc-123/service blocked: conflict while rebasing in /home/you/work/wt-service
+  Resolve it by running stk restack from that worktree.
+```
+
+Deleting is different: `stk sync`, `stk delete` and `stk fold` still refuse a
+branch another worktree holds, because removing it would leave that worktree on
+a branch that no longer exists.
+
 ### Publishing a stack
 
 `stk submit` pushes the current branch to the configured remote, creating it
@@ -339,7 +382,7 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | `--draft-from <branch>` | | open that branch and everything above it as drafts |
 | `--draft-branch <branch>` | | open just that branch as a draft; repeatable |
 | `--update` | `-u` | refresh the pull requests that already exist; open none |
-| `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
+| `--no-prompt` | `-n` | do not ask: title from `stk.prTitle`, body is one bullet per commit, nothing is a draft |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
 | `--force` | `-f` | replace a diverged remote branch whatever it holds; implies `-n` |
 | `--no-comment` | | leave the stack comment on each pull request alone |
@@ -351,6 +394,23 @@ never a question of which one wins.
 Without `-n` the title and body are asked for, prefilled from the branch's
 commits; press enter to accept an offer. Without a terminal, `--pull` needs
 `-n`, so scripts and agents never hang on a prompt.
+
+#### Where a generated title comes from
+
+With `-n` there is nobody to ask, so `stk` writes the title itself: the branch
+name. `stk.prTitle` says so explicitly, and can say otherwise instead:
+
+```bash
+git config stk.prTitle branch   # the branch name; the default
+git config stk.prTitle commit   # the subject of the branch's first commit
+```
+
+`commit` takes the *first* commit's subject, not the latest, so the title
+stays put as more commits land on the branch; a branch whose name already
+reads like a sentence is better served by `branch`. Either way the setting is
+only about the title `stk` writes on its own — the prompt has always offered
+that first subject, and still does. Any other value is refused rather than
+quietly ignored.
 
 A pull request cannot be based on a branch the remote does not have, so
 ancestors that have never been pushed are pushed first — they are not
@@ -1058,8 +1118,9 @@ The following branches add nothing to main:
 
 A branch checked out *here* is stepped off first, so the one you are standing
 on when its pull request lands is pruned like any other. A branch checked out
-in another worktree is reported and left alone: that ref is not this worktree's
-to move.
+in another worktree is reported and left alone: deleting it would leave that
+worktree on a branch that no longer exists. Restacking one is a different
+matter — see [Branches in other worktrees](#branches-in-other-worktrees).
 
 Whatever the survivors were proposed onto is corrected in the same pass. The
 branch below them has merged or gone on the remote, and a pull request left
@@ -1123,7 +1184,7 @@ Everything lives inside the repository and is shared by every worktree:
 
 | State | Where |
 | --- | --- |
-| trunk, default remote, autostash and GitHub stacks preferences, metadata version | `stk.*` in the repository git config |
+| trunk, default remote, autostash, GitHub stacks and PR title preferences, metadata version | `stk.*` in the repository git config |
 | mirror of the graph for `gh stack` (opt-in) | `<git-common-dir>/gh-stack`, `gh stack`'s own file |
 | branch identity and logical parent | `branch.<name>.stk-id` / `.stk-parent` |
 | protected base commits | `refs/stk/base/<branch-id>` |
@@ -1164,7 +1225,9 @@ commits belong to the branch.
 - deletes a branch with no such proof only where you named it — `stk delete`, or
   the separate `stk sync` list that defaults to *no* — and prints the one
   command that brings it back;
-- never deletes or rewrites a branch checked out in another worktree;
+- never deletes a branch checked out in another worktree, and rewrites one only
+  from inside the worktree that holds it, never while that worktree has
+  uncommitted changes or a git operation of its own in flight;
 - never loses your uncommitted changes: it parks them, puts them back, and
   leaves them in the stash list if they will not reapply (`--no-autostash` to
   refuse the operation instead);

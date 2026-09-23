@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/egmacke/stk/internal/config"
 	"github.com/egmacke/stk/internal/forge"
 	"github.com/egmacke/stk/internal/git"
 	"github.com/egmacke/stk/internal/output"
@@ -520,7 +521,7 @@ func pullRequestText(env *Env, b *stack.Branch, base string, opts SubmitOptions)
 	subjects := env.Repo.CommitSubjects(b.Base, b.SHA)
 	body := bulletBody(subjects)
 	if opts.NoPrompt {
-		return b.Name, body, nil
+		return generatedTitle(env.Cfg.PRTitle, b, subjects), body, nil
 	}
 	if env.AskPullRequest == nil {
 		return "", "", fmt.Errorf(
@@ -534,6 +535,19 @@ func pullRequestText(env *Env, b *stack.Branch, base string, opts SubmitOptions)
 		title = subjects[0]
 	}
 	return env.AskPullRequest(b, title, body)
+}
+
+// generatedTitle names a pull request stk opens without being able to ask.
+//
+// The branch name is the default because it is what the whole stack is keyed
+// on and it survives the commits being rewritten; stk.prTitle = commit takes
+// the first commit's subject instead, which usually reads better. A branch
+// that adds no commit has no subject to take, so it falls back to the name.
+func generatedTitle(src config.PRTitleSource, b *stack.Branch, subjects []string) string {
+	if src == config.PRTitleCommit && len(subjects) > 0 {
+		return subjects[0]
+	}
+	return b.Name
 }
 
 // bulletBody lists the commits a branch adds, one per line.

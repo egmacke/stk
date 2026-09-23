@@ -38,6 +38,9 @@ func newSubmitCmd() *cobra.Command {
 			"chain in order, rewritten in place as the stack changes. With\n" +
 			"stk.githubStacks = true the pull requests are instead linked as a stack on\n" +
 			"GitHub itself, through the gh stack extension, and no comment is written.\n\n" +
+			"With --no-prompt there is nobody to ask, so stk writes the title itself:\n" +
+			"the branch name, or, with stk.prTitle = commit, the subject of the\n" +
+			"branch's first commit. The prompt offers that subject either way.\n\n" +
 			"stk s is this command; stk ss is stk submit --stack, which refreshes every\n" +
 			"branch of the stack at once. Every other flag still applies, so stk ss -pn\n" +
 			"proposes the whole stack without asking anything.\n\n" +
@@ -113,7 +116,7 @@ func newSubmitCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&draft, "draft", "d", false, "open every new pull request as a draft (implies --pull)")
 	cmd.Flags().StringVar(&draftFrom, "draft-from", "", "open `branch` and everything above it as drafts (implies --pull)")
 	cmd.Flags().StringArrayVar(&draftBranches, "draft-branch", nil, "open this `branch` as a draft; repeatable (implies --pull)")
-	cmd.Flags().BoolVarP(&noPrompt, "no-prompt", "n", false, "do not ask for a title, body or draft state; use the generated ones")
+	cmd.Flags().BoolVarP(&noPrompt, "no-prompt", "n", false, "do not ask for a title, body or draft state; use the generated ones (see stk.prTitle)")
 	cmd.Flags().BoolVarP(&updateOnly, "update", "u", false, "refresh the pull requests that already exist; never open one (implies --pull)")
 	cmd.Flags().BoolVarP(&wholeStack, "stack", "s", false, "submit every branch in the stack, each onto its parent")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace a diverged remote branch whatever it holds, and ask nothing (implies --no-prompt)")

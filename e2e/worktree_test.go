@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,7 +71,7 @@ func TestStackMarksBranchesHeldByAnotherWorktree(t *testing.T) {
 	requireContains(t, line, "@")
 }
 
-func TestRestackSkipsBranchHeldByAnotherWorktree(t *testing.T) {
+func TestRestackRewritesBranchHeldByAnotherWorktree(t *testing.T) {
 	r := newRepo(t)
 	buildStack(r, "api", "service", "ui")
 	wt := r.addWorktree("wt-service", "service")
@@ -81,18 +82,93 @@ func TestRestackSkipsBranchHeldByAnotherWorktree(t *testing.T) {
 	uiTip := r.sha("ui")
 
 	out := r.stk("restack")
-	requireContains(t, out, "skipped: checked out in "+wt)
-	requireContains(t, out, "Run stk restack from that worktree.")
+	requireContains(t, out, wt)
+	if r.sha("service") == serviceTip {
+		t.Fatal("service was not restacked")
+	}
+	// The branch above it was rebased on the rewritten parent, not blocked.
+	if r.sha("ui") == uiTip {
+		t.Fatal("ui was not restacked")
+	}
+	// The linked worktree moved with its ref rather than being left behind it.
+	requireEqual(t, r.gitAt(wt, "symbolic-ref", "--short", "HEAD"), "service", "still on service")
+	requireEqual(t, r.gitAt(wt, "rev-parse", "HEAD"), r.sha("service"), "linked worktree HEAD")
+	if status := r.gitAt(wt, "status", "--porcelain"); status != "" {
+		t.Fatalf("linked worktree left dirty:\n%s", status)
+	}
+}
+
+func TestRestackSkipsBranchHeldByADirtyWorktree(t *testing.T) {
+	r := newRepo(t)
+	buildStack(r, "api", "service", "ui")
+	wt := r.addWorktree("wt-service", "service")
+	if err := os.WriteFile(filepath.Join(wt, "service.txt"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r.stk("checkout", "api")
+	r.amend("api.txt", "api amended\n", "api amended")
+	serviceTip := r.sha("service")
+	uiTip := r.sha("ui")
+
+	out := r.stk("restack")
+	requireContains(t, out, "skipped: checked out with uncommitted changes in "+wt)
 	// A child of a skipped parent must not be rebased against uncertain state.
 	requireContains(t, out, "ui blocked")
 	requireEqual(t, r.sha("service"), serviceTip, "service untouched")
 	requireEqual(t, r.sha("ui"), uiTip, "ui untouched")
+	requireEqual(t, strings.TrimSpace(r.gitAt(wt, "status", "--porcelain")), "M service.txt", "changes left alone")
+}
 
-	// Running from the owning worktree completes the work.
+func TestRestackUndoesAConflictingRebaseInAnotherWorktree(t *testing.T) {
+	r := newRepo(t)
+	conflictingStack(r)
+	wt := r.addWorktree("wt-b", "b")
+
+	r.stk("checkout", "a")
+	r.amend("shared.txt", "a rewritten\n", "a rewritten")
+	bTip := r.sha("b")
+	cTip := r.sha("c")
+
+	out := r.stk("restack")
+	requireContains(t, out, "b blocked: conflict while rebasing in "+wt)
+	requireContains(t, out, "Resolve it by running stk restack from that worktree.")
+	requireContains(t, out, "c blocked")
+	requireEqual(t, r.sha("b"), bTip, "b left where it was")
+	requireEqual(t, r.sha("c"), cTip, "c left where it was")
+	// The other worktree is not left mid-rebase, and no journal survives here.
+	requireEqual(t, r.gitAt(wt, "status", "--porcelain"), "", "linked worktree left mid-rebase")
+	requireEqual(t, r.gitAt(wt, "symbolic-ref", "--short", "HEAD"), "b", "still on b")
+	requireEqual(t, r.stkAt(r.Root, "", "restack").Code, 0, "restack again")
+
+	// The conflict is still there to resolve, in the worktree that owns it.
 	res := r.stkAt(wt, "", "restack")
-	requireEqual(t, res.Code, 0, "restack from owning worktree")
+	requireEqual(t, res.Code, 1, "restack from the owning worktree")
+	requireContains(t, res.All(), "Conflict encountered")
+	r.stkAt(wt, "", "abort")
+}
+
+func TestSyncRestacksThroughAnotherWorktree(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stk("checkout", "api")
+	wt := r.addWorktree("wt-service", "service")
+
+	// Advance the remote trunk, so the whole stack needs replaying.
+	upstream := filepath.Join(filepath.Dir(r.Root), "upstream")
+	r.runIn(filepath.Dir(r.Root), "", "git", "clone", "-q", r.Origin, upstream)
+	r.runIn(upstream, "", "git", "commit", "-q", "--allow-empty", "-m", "remote work")
+	r.runIn(upstream, "", "git", "push", "-q", "origin", "main")
+
+	serviceTip := r.sha("service")
+	out := r.stk("--no-interactive", "sync", "--no-cleanup")
+	requireContains(t, out, wt)
 	if r.sha("service") == serviceTip {
-		t.Fatal("service was not restacked from its own worktree")
+		t.Fatal("service was not restacked through its own worktree")
+	}
+	requireEqual(t, r.gitAt(wt, "rev-parse", "HEAD"), r.sha("service"), "linked worktree moved with the ref")
+	if status := r.gitAt(wt, "status", "--porcelain"); status != "" {
+		t.Fatalf("linked worktree left dirty:\n%s", status)
 	}
 }
 

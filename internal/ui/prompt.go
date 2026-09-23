@@ -186,3 +186,60 @@ func askLine(question string) (answer string, eof bool, err error) {
 	}
 	return strings.TrimSpace(line), errors.Is(readErr, io.EOF), nil
 }
+
+// Choice is one answer a Choose question accepts.
+type Choice struct {
+	// Key is the single letter that picks it; the whole label works too.
+	Key string
+	// Label names the answer in the prompt, starting with Key.
+	Label string
+	// Default is the answer an empty line gives.
+	Default bool
+}
+
+// Choose asks a question with a fixed set of answers and returns the key of
+// the one given.
+//
+// An answer it does not recognise is asked again rather than guessed at, and
+// end of input is a cancellation: nobody was there to choose.
+func Choose(question string, choices []Choice) (string, error) {
+	var labels []string
+	var keys []string
+	def := ""
+	for _, c := range choices {
+		key := c.Key
+		if c.Default {
+			// Capitalised, as in (Y/n), so the default shows without colour.
+			def = c.Key
+			key = strings.ToUpper(key)
+		}
+		label := "[" + key + "]" + strings.TrimPrefix(c.Label, c.Key)
+		labels = append(labels, label)
+		keys = append(keys, c.Key)
+	}
+	prompt := fmt.Sprintf("%s %s", output.Bold(question), output.Dim(strings.Join(labels, ", ")))
+	for {
+		line, eof, err := askLine(prompt)
+		if err != nil {
+			return "", err
+		}
+		answer := strings.ToLower(line)
+		if answer == "" {
+			if eof {
+				return "", ErrCancelled
+			}
+			if def != "" {
+				return def, nil
+			}
+		}
+		for _, c := range choices {
+			if answer == strings.ToLower(c.Key) || answer == strings.ToLower(c.Label) {
+				return c.Key, nil
+			}
+		}
+		if eof {
+			return "", ErrCancelled
+		}
+		fmt.Fprintf(os.Stderr, "Answer %s.\n", strings.Join(keys, ", "))
+	}
+}

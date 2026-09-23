@@ -311,7 +311,7 @@ stk submit --stack --pull          # one PR per branch, each onto its parent
 | `--draft-from <branch>` | | open that branch and everything above it as drafts |
 | `--draft-branch <branch>` | | open just that branch as a draft; repeatable |
 | `--update` | `-u` | refresh the pull requests that already exist; open none |
-| `--no-prompt` | `-n` | do not ask: title is the branch name, body is one bullet per commit, nothing is a draft |
+| `--no-prompt` | `-n` | do not ask: title from `stk.prTitle`, body is one bullet per commit, nothing is a draft |
 | `--stack` | `-s` | submit every branch in the stack, each onto its parent |
 | `--force` | `-f` | replace a diverged remote branch whatever it holds; implies `-n` |
 | `--no-comment` | | leave the stack comment on each pull request alone |
@@ -323,6 +323,23 @@ never a question of which one wins.
 Without `-n` the title and body are asked for, prefilled from the branch's
 commits; press enter to accept an offer. Without a terminal, `--pull` needs
 `-n`, so scripts and agents never hang on a prompt.
+
+#### Where a generated title comes from
+
+With `-n` there is nobody to ask, so `stk` writes the title itself: the branch
+name. `stk.prTitle` says so explicitly, and can say otherwise instead:
+
+```bash
+git config stk.prTitle branch   # the branch name; the default
+git config stk.prTitle commit   # the subject of the branch's first commit
+```
+
+`commit` takes the *first* commit's subject, not the latest, so the title
+stays put as more commits land on the branch; a branch whose name already
+reads like a sentence is better served by `branch`. Either way the setting is
+only about the title `stk` writes on its own — the prompt has always offered
+that first subject, and still does. Any other value is refused rather than
+quietly ignored.
 
 A pull request cannot be based on a branch the remote does not have, so
 ancestors that have never been pushed are pushed first — they are not
@@ -1094,7 +1111,7 @@ Everything lives inside the repository and is shared by every worktree:
 
 | State | Where |
 | --- | --- |
-| trunk, default remote, autostash and GitHub stacks preferences, metadata version | `stk.*` in the repository git config |
+| trunk, default remote, autostash, GitHub stacks and PR title preferences, metadata version | `stk.*` in the repository git config |
 | mirror of the graph for `gh stack` (opt-in) | `<git-common-dir>/gh-stack`, `gh stack`'s own file |
 | branch identity and logical parent | `branch.<name>.stk-id` / `.stk-parent` |
 | protected base commits | `refs/stk/base/<branch-id>` |

@@ -31,6 +31,14 @@ func resolveParent(g *stack.Graph, name string) (*stack.Branch, error) {
 	return b, nil
 }
 
+// CanBeParent reports whether a branch may be given as a stack parent,
+// returning the reason it may not. Callers use it to reject a parent before
+// they start work that would have to be undone.
+func CanBeParent(g *stack.Graph, name string) error {
+	_, err := resolveParent(g, name)
+	return err
+}
+
 // parentID converts a parent node to the value stored in metadata; trunk is
 // recorded as an absent parent.
 func parentID(parent *stack.Branch) string {

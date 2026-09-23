@@ -148,7 +148,7 @@ stk restack
 | --- | --- |
 | `stk init` | Record trunk and the default remote |
 | `stk create [branch] [--from <parent>]` | Create a branch and record its parent |
-| `stk checkout [branch]`, `stk co` | Switch branches; interactive picker with no argument; fetches a branch only the remote has, and offers to track it |
+| `stk checkout [branch] [-n\|-t <p>]`, `stk co` | Switch branches; interactive picker with no argument; fetches a branch only the remote has, and tracks an untracked one onto trunk |
 | `stk show` | The same viewer, without implying checkout is the goal |
 | `stk stack [--all] [--json]` | Print the current stack |
 | `stk info [branch] [--json]` | Everything stk knows about a branch |
@@ -212,6 +212,34 @@ Only these ten names are claimed. Everything else stays available to git, so
 you have `git s` aliased to something of your own, reach it with `stk -- s`. There is no prefix matching: `stk resta` is a git command, not
 `restack`. User-defined aliases remain a phase-two item; write shell or git
 aliases in the meantime.
+
+### Checking out an untracked branch
+
+A branch `stk` does not track is brought into the stack as you check it out,
+with trunk as its parent — a loose local branch, or one only the remote has,
+which is fetched first:
+
+```console
+$ stk checkout colleague
+Fetching origin...
+✓ Created colleague from origin/colleague
+✓ Switched to colleague
+✓ Tracking colleague with parent main
+```
+
+Trunk is a guess, and the cheapest one to correct: `stk move colleague --onto
+api` says otherwise later, and `stk untrack colleague` takes it back out
+entirely. Name the parent up front, or keep the branch out of the stack, with:
+
+```bash
+stk checkout loose -t api     # --track-from: stack it on api instead of trunk
+stk checkout loose -n         # --no-track: leave it an ordinary git branch
+```
+
+`--track-from` takes trunk or a branch `stk` already tracks, and it is checked
+before anything is checked out, so a mistyped parent leaves you where you were.
+A branch `stk` already tracks is switched to and left as it is, and so is
+trunk.
 
 ### Restack scope
 
@@ -853,6 +881,7 @@ Per-command flags have short forms, scoped to their command the way git's are:
 
 ```text
 create   -f --from
+checkout -n --no-track     -t --track-from
 init     -t --trunk        -r --remote
 track    -p --parent       (--from-pr has no short form)
 untrack  -p --reparent     -r --recursive

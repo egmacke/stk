@@ -161,6 +161,7 @@ stk restack
 | `stk fold [branch] [--into <b>\|--stack]` | Collapse stacked branches into one |
 | `stk split [branch] [--at <commit>]` | Divide a branch into several stacked branches |
 | `stk delete [branch...] [-y] [--remote]` | Delete branches, and offer to delete their remote branches |
+| `stk triage [--parent <p>]` | Go through every untracked branch, tracking or deleting each one |
 | `stk restack [--up\|--only]` | Rebase branches onto their parents |
 | `stk submit [branch] [--pull] [--draft] [--stack] [--force]`, `stk s`, `stk ss` | Push to the remote, optionally opening pull requests |
 | `stk ready [branch] [--stack] [--undo]` | Take a pull request out of draft, or put it back |
@@ -876,6 +877,42 @@ checked out in another worktree.
 With no argument the current branch is deleted, and `stk` steps down to the
 nearest branch that survives first.
 
+## Triaging untracked branches
+
+`stk triage` walks every local branch `stk` does not track, one at a time, and
+asks what to do with it:
+
+```console
+$ stk triage
+2 untracked branch(es):
+
+[1/2] colleague 2d5cb8f
+    on the remote as origin/colleague
+Track colleague onto main? [t]rack, [S]kip, [q]uit t
+✓ Tracking colleague with parent main
+
+[2/2] spike 6f46091
+    not on the remote, with 3 commit(s) kept nowhere else
+Track spike onto main, or delete it? [t]rack, [d]elete, [S]kip, [q]uit d
+spike has 3 commit(s) kept nowhere else. Delete it anyway? (y/N) y
+✓ Deleted spike (was 6f46091)
+    Recover it with: git branch spike 6f46091
+
+Tracked 1, deleted 1, left 0 untracked.
+```
+
+A branch the remote also has is published work, so it can only be tracked or
+left alone. A branch that exists only here can be deleted as well; when it
+holds commits that neither trunk nor another branch has, `stk` asks a second
+time, defaulting to *no*, and prints the command that brings it back. A branch
+checked out in another worktree is never offered for deletion, and deleting the
+one checked out here steps onto trunk first.
+
+Tracked branches go onto trunk; `--parent` names another tracked branch
+instead. Pressing return skips a branch, and `q` (or the end of input) stops,
+keeping every answer given so far. Whether a branch is on the remote is judged
+from the last fetch: `stk triage` never fetches and never pushes.
+
 ## Renaming a branch
 
 Stack relationships are keyed by stable ids, so a rename leaves parents and
@@ -1222,9 +1259,9 @@ commits belong to the branch.
 - never deletes a branch, in `stk sync` or `stk fold`, without proof its commits
   live on somewhere else — in trunk by ancestry or by identical content, in the
   branch a fold absorbs it into, or in a pull request the forge says landed;
-- deletes a branch with no such proof only where you named it — `stk delete`, or
-  the separate `stk sync` list that defaults to *no* — and prints the one
-  command that brings it back;
+- deletes a branch with no such proof only where you named it — `stk delete`,
+  `stk triage`, or the separate `stk sync` list that defaults to *no* — and
+  prints the one command that brings it back;
 - never deletes a branch checked out in another worktree, and rewrites one only
   from inside the worktree that holds it, never while that worktree has
   uncommitted changes or a git operation of its own in flight;

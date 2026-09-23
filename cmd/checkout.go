@@ -14,11 +14,16 @@ import (
 
 func newCheckoutCmd() *cobra.Command {
 	var stash autostashPref
+	var track trackPref
 	cmd := &cobra.Command{
-		Use:     "checkout [branch]",
+		Use:     "checkout [branch] [--no-track | --track-from <branch>]",
 		Aliases: []string{"co"},
 		Short:   "Switch branches, interactively when no name is given",
-		Args:    cobra.MaximumNArgs(1),
+		Long: "A branch stk does not track is brought into the stack as it is checked out,\n" +
+			"with trunk as its parent — including a branch only the remote had, which is\n" +
+			"fetched first. --track-from names a different parent, and --no-track leaves\n" +
+			"the branch an ordinary git branch.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
@@ -27,12 +32,18 @@ func newCheckoutCmd() *cobra.Command {
 			if err := stash.apply(a); err != nil {
 				return err
 			}
+			if err := track.validate(a); err != nil {
+				return err
+			}
 			if len(args) == 1 {
 				b, ok := a.Graph.Resolve(args[0])
 				if !ok {
-					return checkoutRemote(a, args[0])
+					return checkoutRemote(a, &track, args[0])
 				}
-				return switchTo(a, b)
+				if err := switchTo(a, b); err != nil {
+					return err
+				}
+				return track.apply(a, b.Name)
 			}
 			if !Selectable() {
 				return errors.New("no branch given and stk is not attached to a terminal\n\nName the branch, or use stk stack to list them")
@@ -49,78 +60,96 @@ func newCheckoutCmd() *cobra.Command {
 				}
 				return err
 			}
-			return switchTo(a, chosen)
+			if err := switchTo(a, chosen); err != nil {
+				return err
+			}
+			return track.apply(a, chosen.Name)
 		},
 		ValidArgsFunction: branchNameCompletion,
 	}
 	stash.register(cmd)
+	track.register(cmd)
 	return cmd
+}
+
+// trackPref is the --no-track/--track-from pair, which decide where a branch
+// stk does not yet track lands in the stack once it has been checked out.
+//
+// Trunk is the answer when neither is given: a branch you have just switched
+// to is work that starts from trunk far more often than not, and stk track or
+// stk move says otherwise later at no cost.
+type trackPref struct {
+	off  bool
+	from string
+}
+
+func (p *trackPref) register(cmd *cobra.Command) {
+	cmd.Flags().BoolVarP(&p.off, "no-track", "n", false,
+		"leave an untracked branch out of the stack")
+	cmd.Flags().StringVarP(&p.from, "track-from", "t", "",
+		"stack an untracked branch on `branch` instead of trunk")
+	_ = cmd.RegisterFlagCompletionFunc("track-from", branchNameCompletion)
+}
+
+// validate rejects a contradictory pair, and a parent that cannot hold a
+// branch, before anything is checked out: a mistyped --track-from should not
+// leave you on a branch the command then refused to track.
+func (p *trackPref) validate(a *app) error {
+	if p.off && p.from != "" {
+		return errors.New("use either --no-track or --track-from, not both")
+	}
+	if p.from == "" {
+		return nil
+	}
+	return operations.CanBeParent(a.Graph, p.from)
+}
+
+// apply brings the branch just checked out into the stack when stk does not
+// already track it.
+func (p *trackPref) apply(a *app, name string) error {
+	if p.off {
+		return nil
+	}
+	if _, ok := a.Graph.Resolve(name); !ok {
+		// The graph was built before the branch was fetched.
+		if err := a.reload(); err != nil {
+			return err
+		}
+	}
+	parent := p.from
+	if parent == "" {
+		parent = a.Cfg.Trunk
+	}
+	b, ok := a.Graph.Resolve(name)
+	switch {
+	case ok && (b.IsTrunk || b.Tracked):
+		return nil
+	case !ok && !globals.dryRun:
+		// Nothing was checked out after all.
+		return nil
+	case globals.dryRun:
+		// Under --dry-run the fetched branch does not exist to resolve, and a
+		// branch that arrives from the remote is never already tracked.
+		a.Out.Dry("would track %s with parent %s", output.BranchName(name), output.BranchName(parent))
+		return nil
+	}
+	return operations.Track(a.Env, a.Graph, name, parent)
 }
 
 // checkoutRemote handles a name that is no local branch. Somebody else may
 // have pushed it, so stk looks on the remote before declaring it unknown.
-func checkoutRemote(a *app, name string) error {
+func checkoutRemote(a *app, track *trackPref, name string) error {
 	found, err := operations.CheckoutRemote(a.Env, name)
 	if err != nil {
 		return err
 	}
 	if found {
-		return offerToTrack(a, name)
+		return track.apply(a, name)
 	}
 	if remote := a.Cfg.Remote; remote != "" && a.Repo.RemoteExists(remote) {
 		return fmt.Errorf("branch %q does not exist locally or on %s", name, remote)
 	}
 	return fmt.Errorf("branch %q does not exist", name)
-}
-
-// offerToTrack asks whether a branch stk has just brought down from the remote
-// belongs in the stack, since the person who pushed it stacked it somewhere stk
-// cannot see.
-//
-// Declining is free: the branch stays an ordinary git branch, and stk track
-// says the same thing later.
-func offerToTrack(a *app, name string) error {
-	if globals.dryRun {
-		return nil
-	}
-	// The graph was built before the branch existed.
-	if err := a.reload(); err != nil {
-		return err
-	}
-	b, ok := a.Graph.Resolve(name)
-	if !ok {
-		return nil
-	}
-	a.Out.Printf("")
-	if !Interactive() {
-		a.Out.Printf("%s is not tracked by stk. To stack on it:", output.BranchName(name))
-		a.Out.Printf("")
-		a.Out.Printf("    %s", output.Command(fmt.Sprintf("stk track %s --parent <branch>", name)))
-		return nil
-	}
-	yes, err := ui.Confirm(fmt.Sprintf("Track %s in the stack?", name), true)
-	if cancelled(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !yes {
-		return nil
-	}
-	parent, err := promptBranch(a.Graph, branchPrompt{
-		Title:      fmt.Sprintf("Parent of %s", name),
-		Candidates: parentCandidates(a.Graph, b),
-		Missing:    "--parent is required; stk will not guess a stack parent",
-		Empty:      fmt.Sprintf("no branch can be the parent of %s", name),
-	})
-	if cancelled(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return operations.Track(a.Env, a.Graph, name, parent)
 }
 
 // switchTo checks out a branch, explaining git's worktree restriction rather

@@ -38,7 +38,7 @@ func CheckoutRemote(env *Env, name string) (bool, error) {
 		return false, err
 	}
 	env.Out.OK("Created %s from %s/%s", output.BranchName(name), remote, name)
-	// The branch arrives as an ordinary git branch: stk never guesses a stack
-	// parent, so where it belongs is the caller's question to ask.
+	// The branch arrives as an ordinary git branch; where it belongs in the
+	// stack is the caller's to decide.
 	return true, Switch(env, name)
 }

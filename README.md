@@ -236,6 +236,49 @@ With sibling branches, `stk restack` from `C` still processes `A`, `B`, `D`,
 `C` and `E` — the entire connected tree rooted at the lowest branch above
 trunk.
 
+### Branches in other worktrees
+
+A branch another worktree has checked out is still restacked, by `stk restack`
+and by `stk sync` alike. The rebase runs *inside* that worktree, which is the
+only way git will rewrite the branch at all, and means its index and files move
+with the ref instead of being left describing history that is no longer there.
+It is the same route `stk sync` takes to fast-forward a trunk checked out
+elsewhere. `stk` says where the work happened:
+
+```console
+$ stk restack
+
+Restacking the stack containing sc-123/api...
+
+✓ sc-123/api
+✓ sc-123/service in /home/you/work/wt-service
+✓ sc-123/ui
+
+2 restacked, 1 already current.
+```
+
+Two things stop it, and both leave the branch exactly where it was:
+
+- **Uncommitted changes there.** A working tree you are not standing in is not
+  `stk`'s to disturb, so the branch is skipped and everything above it is
+  reported blocked rather than rebased against uncertain state. The same goes
+  for a worktree part-way through a rebase, merge, cherry-pick, revert or
+  bisect.
+- **A conflict.** A conflict is only `stk`'s to pause where the journal lives —
+  `stk continue` and `stk abort` belong to one worktree, and a rebase left
+  paused in another would wedge a checkout you never pointed `stk` at. So the
+  rebase is undone there and the branch reported, for you to resolve where it
+  belongs:
+
+```text
+⊘ sc-123/service blocked: conflict while rebasing in /home/you/work/wt-service
+  Resolve it by running stk restack from that worktree.
+```
+
+Deleting is different: `stk sync`, `stk delete` and `stk fold` still refuse a
+branch another worktree holds, because removing it would leave that worktree on
+a branch that no longer exists.
+
 ### Publishing a stack
 
 `stk submit` pushes the current branch to the configured remote, creating it
@@ -1046,8 +1089,9 @@ The following branches add nothing to main:
 
 A branch checked out *here* is stepped off first, so the one you are standing
 on when its pull request lands is pruned like any other. A branch checked out
-in another worktree is reported and left alone: that ref is not this worktree's
-to move.
+in another worktree is reported and left alone: deleting it would leave that
+worktree on a branch that no longer exists. Restacking one is a different
+matter — see [Branches in other worktrees](#branches-in-other-worktrees).
 
 Whatever the survivors were proposed onto is corrected in the same pass. The
 branch below them has merged or gone on the remote, and a pull request left
@@ -1152,7 +1196,9 @@ commits belong to the branch.
 - deletes a branch with no such proof only where you named it — `stk delete`, or
   the separate `stk sync` list that defaults to *no* — and prints the one
   command that brings it back;
-- never deletes or rewrites a branch checked out in another worktree;
+- never deletes a branch checked out in another worktree, and rewrites one only
+  from inside the worktree that holds it, never while that worktree has
+  uncommitted changes or a git operation of its own in flight;
 - never loses your uncommitted changes: it parks them, puts them back, and
   leaves them in the stash list if they will not reapply (`--no-autostash` to
   refuse the operation instead);

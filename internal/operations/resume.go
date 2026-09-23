@@ -3,6 +3,7 @@ package operations
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/egmacke/stk/internal/output"
 	"github.com/egmacke/stk/internal/stack"
@@ -66,6 +67,30 @@ func Continue(env *Env) error {
 	return err
 }
 
+// restoreBranch puts one branch back at the commit the operation snapshotted.
+//
+// A branch the operation rewrote inside another worktree is put back the same
+// way, so that worktree's index and files come back with the ref rather than
+// being left describing the rewritten history. Uncommitted work appearing
+// there since is not stk's to discard, so the ref moves alone and the mismatch
+// is reported instead.
+func restoreBranch(env *Env, name, sha, holder string) error {
+	repo := env.Repo
+	ref := "refs/heads/" + name
+	if holder == "" || filepath.Clean(holder) == filepath.Clean(repo.Root) {
+		return repo.UpdateRef(ref, sha)
+	}
+	clean, err := repo.WorktreeClean(holder)
+	if err != nil {
+		return err
+	}
+	if !clean {
+		env.Out.Warnf("%s has uncommitted changes in %s; its files were left alone", name, holder)
+		return repo.UpdateRef(ref, sha)
+	}
+	return repo.ResetHardIn(holder, sha)
+}
+
 // Abort undoes the whole stk operation, not merely the rebase that is
 // currently in flight.
 func Abort(env *Env) error {
@@ -99,13 +124,19 @@ func Abort(env *Env) error {
 	for _, step := range op.Branches {
 		names[step.BranchID] = step.Name
 	}
+	// Read after the detach above, so anything still listed here is held by a
+	// worktree other than this one.
+	holders, err := repo.BranchWorktrees()
+	if err != nil {
+		return err
+	}
 	restored := 0
 	for id, sha := range op.Snapshots {
 		name := names[id]
 		if name == "" || !repo.BranchExists(name) {
 			continue
 		}
-		if err := repo.UpdateRef("refs/heads/"+name, sha); err != nil {
+		if err := restoreBranch(env, name, sha, holders[name]); err != nil {
 			return err
 		}
 		restored++

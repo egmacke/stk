@@ -85,3 +85,50 @@ func (repo *Repo) BranchWorktrees() (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// WorktreeRunner returns a runner rooted at another worktree of this
+// repository, or this worktree's own runner when dir is empty.
+func (repo *Repo) WorktreeRunner(dir string) *Runner {
+	if dir == "" {
+		return repo.R
+	}
+	return repo.R.WithDir(dir)
+}
+
+// WorktreeClean reports whether the worktree at dir has no staged or unstaged
+// changes. Untracked files do not count as dirty, exactly as in IsClean.
+func (repo *Repo) WorktreeClean(dir string) (bool, error) {
+	res := repo.WorktreeRunner(dir).Run("status", "--porcelain", "--untracked-files=no")
+	if !res.OK() {
+		return false, res.Error()
+	}
+	return strings.TrimSpace(res.Stdout) == "", nil
+}
+
+// WorktreeBusy reports whether the worktree at dir is part-way through a git
+// operation of its own: a rebase, a merge, a cherry-pick, a revert or a
+// bisect. stk never rewrites a branch out from under one of those.
+func (repo *Repo) WorktreeBusy(dir string) bool {
+	if repo.RebaseInProgressIn(dir) {
+		return true
+	}
+	for _, name := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"} {
+		if repo.gitPathExists(dir, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// AbortRebaseIn ends a rebase paused in another worktree, putting its branch,
+// index and files back where they were.
+func (repo *Repo) AbortRebaseIn(dir string) error {
+	return repo.WorktreeRunner(dir).Capture("rebase", "--abort").Error()
+}
+
+// ResetHardIn moves the branch another worktree has checked out to a commit,
+// taking that worktree's index and files with it. Callers must have proved
+// there is nothing there to lose.
+func (repo *Repo) ResetHardIn(dir, sha string) error {
+	return repo.WorktreeRunner(dir).Mutate("reset", "--hard", "--quiet", sha).Error()
+}

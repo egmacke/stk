@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/egmacke/stk/compare/v1.5.0...v1.6.0) (2026-09-23)
+
+
+### Features
+
+* choose where a generated pull request title comes from ([#26](https://github.com/egmacke/stk/issues/26)) ([b7f0ba3](https://github.com/egmacke/stk/commit/b7f0ba338bb3929d3857b8bacb95d8b79c3fbb47))
+
 ## [1.5.0](https://github.com/egmacke/stk/compare/v1.4.0...v1.5.0) (2026-09-23)
 
 

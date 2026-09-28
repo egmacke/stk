@@ -144,10 +144,15 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 	if err != nil {
 		return Summary{}, err
 	}
+	scope := opts.Scope
+	if target != nil && target.IsTrunk {
+		// From trunk the plan covers every stack, and is journalled as such.
+		scope = ScopeAll
+	}
 	op := &Operation{
 		ID:             id,
 		Type:           "restack",
-		Scope:          opts.Scope,
+		Scope:          scope,
 		Worktree:       env.Repo.Root,
 		OriginalBranch: g.CurrentName,
 		Snapshots:      map[string]string{},
@@ -183,6 +188,7 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 	for _, id := range op.Blocked {
 		blocked[id] = true
 	}
+	offStack := offStackTest(g, op)
 
 	for i := start; i < len(op.Branches); i++ {
 		step := op.Branches[i]
@@ -196,7 +202,7 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 			sum.Skipped++
 			continue
 		}
-		outcome, err := restackOne(env, op, b, blocked)
+		outcome, err := restackOne(env, op, b, blocked, offStack(b))
 		if err != nil {
 			if errors.Is(err, ErrConflict) {
 				return sum, err
@@ -278,8 +284,41 @@ func summarise(s Summary) string {
 	return strings.Join(parts, ", ") + "."
 }
 
+// offStackTest returns the test for a branch outside the stack the user is
+// standing on, whose trouble is reported rather than allowed to stop the run.
+//
+// Only a restack of every stack reaches such a branch. Syncing one stack must
+// not wait on another left in a broken state, so a branch there that cannot be
+// restacked cleanly is left exactly as it was, along with its descendants, for
+// a restack from that stack to settle. From trunk no stack is the user's own,
+// so every one is treated that way.
+func offStackTest(g *stack.Graph, op *Operation) func(*stack.Branch) bool {
+	if op.Scope != ScopeAll {
+		return func(*stack.Branch) bool { return false }
+	}
+	home := map[string]bool{}
+	if cur := g.ByID[op.OriginalBranchID]; cur != nil {
+		for _, b := range stack.Subtree(g.Root(cur)) {
+			home[b.ID] = true
+		}
+	}
+	return func(b *stack.Branch) bool { return !home[b.ID] }
+}
+
+// blockOffStack reports a branch on another stack that could not be restacked,
+// and how to settle it from there.
+func blockOffStack(env *Env, b *stack.Branch, blocked map[string]bool, reason, fix string) (Outcome, error) {
+	blocked[b.ID] = true
+	env.Out.Skip("%s blocked: %s\n  It is on another stack, so it was left as it was. %s",
+		output.BranchName(b.Name), reason, fix)
+	return OutcomeBlocked, nil
+}
+
 // restackOne brings a single branch onto its parent's current tip.
-func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]bool) (Outcome, error) {
+//
+// offStack marks a branch on a stack other than the user's own: a conflict or
+// an unsafe history there blocks the branch instead of stopping the run.
+func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]bool, offStack bool) (Outcome, error) {
 	repo := env.Repo
 
 	if b.HasProblem() {
@@ -362,6 +401,11 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 
 	oldBase := b.Base
 	if !repo.IsAncestor(oldBase, childTip) {
+		if offStack {
+			return blockOffStack(env, b, blocked,
+				"its recorded base "+git.ShortSHA(oldBase)+" is no longer part of its history",
+				"Repair it with stk track "+b.Name+" --parent "+parent.Name+".")
+		}
 		return "", fmt.Errorf(
 			"cannot restack %s safely\n\n"+
 				"Its recorded base %s is no longer part of the branch's history,\n"+
@@ -371,6 +415,11 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 	}
 
 	if !op.RebaseMerges && repo.HasMergeCommits(oldBase, childTip) {
+		if offStack {
+			return blockOffStack(env, b, blocked,
+				"it contains merge commits stk will not flatten",
+				"Check it out and run stk restack --rebase-merges.")
+		}
 		return "", fmt.Errorf(
 			"%s contains merge commits between %s and its tip\n\n"+
 				"stk will not flatten them silently. Re-run with:\n\n    stk restack --rebase-merges",
@@ -388,6 +437,16 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 	if !res.OK() {
 		if rebaseIn != "" {
 			return conflictElsewhere(env, res, b, parent, rebaseIn, blocked)
+		}
+		if repo.RebaseInProgress() && offStack {
+			// Paused here, this rebase would hold up every stack after it
+			// for the sake of one the user is not working on.
+			if err := repo.AbortRebaseIn(""); err != nil {
+				return "", fmt.Errorf("could not abort the conflicting rebase of %s: %w", b.Name, err)
+			}
+			return blockOffStack(env, b, blocked,
+				"conflict while rebasing onto "+parent.Name,
+				"Check it out and run stk restack to resolve it.")
 		}
 		if repo.RebaseInProgress() {
 			if err := op.Save(repo); err != nil {

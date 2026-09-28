@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -450,4 +451,66 @@ func TestSyncNeverDeletesARemoteBranch(t *testing.T) {
 	r.stk("--no-interactive", "sync", "--cleanup", "--no-restack")
 	requireEqual(t, r.branchExists("api"), false, "the local branch went")
 	requireContains(t, r.git("ls-remote", "--heads", "origin"), "refs/heads/api")
+}
+
+// brokenOtherStack builds a stack one/a -> one/b whose restack conflicts, and a
+// clean stack two alongside it, then leaves two checked out.
+func brokenOtherStack(r *repo) {
+	r.stk("create", "one/a")
+	r.commit("shared.txt", "a\n", "one a")
+	r.stk("create", "one/b")
+	r.commit("shared.txt", "b\n", "one b")
+	r.stk("checkout", "one/a")
+	r.amend("shared.txt", "a rewritten\n", "one a rewritten")
+	r.stk("checkout", "main")
+	r.stk("create", "two")
+	r.commit("two.txt", "2\n", "two")
+}
+
+func TestSyncIsNotBlockedByAConflictOnAnotherStack(t *testing.T) {
+	r := newRepoWithRemote(t)
+	brokenOtherStack(r)
+	clone := r.upstreamClone()
+	r.pushRemoteCommit(clone, "remote work")
+	bTip := r.sha("one/b")
+
+	out := r.stk("--no-interactive", "sync", "--no-cleanup")
+	requireContains(t, out, "one/b blocked: conflict while rebasing onto one/a")
+	requireContains(t, out, "Check it out and run stk restack")
+	requireNotContains(t, out, "stk continue")
+
+	requireContains(t, strings.Join(r.log("two"), "\n"), "remote work")
+	requireEqual(t, r.sha("one/b"), bTip, "the conflicting branch was left as it was")
+	requireEqual(t, r.currentBranch(), "two", "original branch restored")
+	if out := r.git("status", "--porcelain"); out != "" {
+		t.Fatalf("working tree not clean after sync:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(r.Root, ".git", "stk", "operations", "current.json")); !os.IsNotExist(err) {
+		t.Fatal("sync left an operation journal behind")
+	}
+}
+
+func TestSyncStillPausesOnAConflictInTheCurrentStack(t *testing.T) {
+	r := newRepoWithRemote(t)
+	brokenOtherStack(r)
+	r.stk("checkout", "one/b")
+
+	res := r.stkAt(r.Root, "", "--no-interactive", "sync", "--no-cleanup")
+	requireEqual(t, res.Code, 1, "conflict exit code")
+	requireContains(t, res.All(), "Conflict encountered.")
+	r.stk("abort")
+}
+
+func TestRestackFromTrunkReportsAConflictingStack(t *testing.T) {
+	r := newRepo(t)
+	brokenOtherStack(r)
+	r.stk("checkout", "main")
+	r.commit("main.txt", "main moved\n", "main moved")
+	bTip := r.sha("one/b")
+
+	out := r.stk("restack")
+	requireContains(t, out, "one/b blocked: conflict while rebasing onto one/a")
+	requireEqual(t, r.log("two")[1], "main moved", "the other stack was restacked")
+	requireEqual(t, r.sha("one/b"), bTip, "the conflicting branch was left as it was")
+	requireEqual(t, r.currentBranch(), "main", "original branch restored")
 }

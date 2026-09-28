@@ -1285,6 +1285,18 @@ When a restack hits a conflict it stops, tells you exactly what to do, and
 keeps a journal so `stk continue` resumes the *original* scope and `stk abort`
 restores every branch it had already rewritten — not just the last one.
 
+That pause is kept for the stack you are working on. When `stk sync`, or
+`stk restack` from trunk, covers every stack, a branch on another stack that
+conflicts — or whose history stk cannot rewrite safely — is put back as it was
+and reported blocked along with its descendants, and the run carries on:
+
+```text
+⊘ other/ui blocked: conflict while rebasing onto other/api
+  It is on another stack, so it was left as it was. Check it out and run stk restack to resolve it.
+```
+
+From trunk no stack is yours, so every conflict is reported this way.
+
 ## Development
 
 ```bash

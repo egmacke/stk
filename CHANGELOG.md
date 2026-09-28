@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/egmacke/stk/compare/v1.7.0...v1.8.0) (2026-09-28)
+
+
+### Features
+
+* keep sync and restack going past conflicts on other stacks ([#30](https://github.com/egmacke/stk/issues/30)) ([45bfddf](https://github.com/egmacke/stk/commit/45bfddf789745bc6ef207c00ece7245163623180))
+
 ## [1.7.0](https://github.com/egmacke/stk/compare/v1.6.0...v1.7.0) (2026-09-23)
 
 

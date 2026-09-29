@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/egmacke/stk/compare/v1.8.0...v1.9.0) (2026-09-29)
+
+
+### Features
+
+* negotiate shared commits and refresh trunk before pushing a new branch ([#32](https://github.com/egmacke/stk/issues/32)) ([beeb575](https://github.com/egmacke/stk/commit/beeb575a10f032848a8776a6065bdcdfdfa8c24c))
+
 ## [1.8.0](https://github.com/egmacke/stk/compare/v1.7.0...v1.8.0) (2026-09-28)
 
 

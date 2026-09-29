@@ -38,6 +38,38 @@ func TestSubmitPushesTheBranch(t *testing.T) {
 	requireContains(t, out, "Nothing to push")
 }
 
+func TestSubmitFetchesTrunkBeforeCreatingARemoteBranch(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	movedRemoteBranch(r, "main", "landed elsewhere")
+	landed := r.gitAt(r.Origin, "rev-parse", "main")
+	requireEqual(t, r.sha("refs/remotes/origin/main") == landed, false, "trunk is stale before submit")
+
+	r.stk("submit")
+	requireEqual(t, r.sha("refs/remotes/origin/main"), landed, "trunk fetched before the push")
+	requireEqual(t, r.sha("main") == landed, false, "local trunk left alone")
+}
+
+func TestSubmitSkipsTheTrunkFetchWhenNothingIsNew(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.stk("submit")
+	r.commit("api2.txt", "more\n", "api more")
+
+	res := r.stkAt(r.Root, "", "--verbose", "submit")
+	requireContains(t, res.All(), "Pushed api to origin (updated)")
+	requireNotContains(t, res.All(), "git fetch")
+}
+
+func TestSubmitNegotiatesTheCommitsItPushes(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+
+	res := r.stkAt(r.Root, "", "--verbose", "submit")
+	requireContains(t, res.All(), "git -c push.negotiate=true push")
+	requireContains(t, res.All(), "Pushed api to origin (created)")
+}
+
 func TestSubmitRecordsAMissingUpstreamWithoutPushing(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")

@@ -104,6 +104,7 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 			return err
 		}
 	}
+	refreshTrunk(env, g, remote, plan)
 	pushed := 0
 	linked := 0
 	opened := 0
@@ -268,6 +269,28 @@ func openForge(env *Env, remote string) (*forge.GH, error) {
 		return nil, err
 	}
 	return gh, nil
+}
+
+// refreshTrunk fetches trunk before a push that creates a remote branch.
+//
+// A new branch has no remote commit to measure against, so what git sends
+// depends on the shared commits it can find, and trunk is the one most likely
+// to contain everything below the stack. Pushing against a stale trunk sends
+// commits the remote already has, and GitHub reports them as part of the new
+// branch. A failed fetch is not fatal: the push is still correct, only larger.
+func refreshTrunk(env *Env, g *stack.Graph, remote string, plan []*stack.Branch) {
+	if env.DryRun {
+		return
+	}
+	for _, b := range plan {
+		if _, exists := env.Repo.RemoteBranchSHA(remote, b.Name); exists {
+			continue
+		}
+		if err := env.Repo.FetchBranch(remote, g.Trunk.Name); err != nil {
+			env.Out.Fail("could not fetch %s from %s before pushing: %v", g.Trunk.Name, remote, err)
+		}
+		return
+	}
 }
 
 // pushBranch sends one branch to the remote, replacing a diverged remote

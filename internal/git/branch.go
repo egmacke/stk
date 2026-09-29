@@ -174,6 +174,13 @@ func (repo *Repo) Fetch(remote string) error {
 	return repo.R.Mutate("fetch", "--prune", remote).Error()
 }
 
+// FetchBranch updates the remote-tracking ref of one branch, leaving every
+// other ref alone.
+func (repo *Repo) FetchBranch(remote, branch string) error {
+	refspec := fmt.Sprintf("refs/heads/%s:refs/remotes/%s/%s", branch, remote, branch)
+	return repo.R.Mutate("fetch", remote, refspec).Error()
+}
+
 // RemoteExists reports whether a remote is configured.
 func (repo *Repo) RemoteExists(name string) bool {
 	res := repo.R.Run("remote")

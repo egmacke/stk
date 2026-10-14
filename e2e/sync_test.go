@@ -514,3 +514,46 @@ func TestRestackFromTrunkReportsAConflictingStack(t *testing.T) {
 	requireEqual(t, r.sha("one/b"), bTip, "the conflicting branch was left as it was")
 	requireEqual(t, r.currentBranch(), "main", "original branch restored")
 }
+
+// A branch moved onto origin/main by hand, or tracked before stk compared
+// against the remote trunk, keeps a base below commits already on trunk. Sync
+// moves it up, so later ranges stop claiming those commits as the branch's.
+func TestSyncRepairsABaseBelowCommitsAlreadyOnTrunk(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	stale := r.baseOf("api")
+	r.pushRemoteCommit(r.upstreamClone(), "landed elsewhere")
+	r.git("fetch", "-q", "origin")
+	landed := r.sha("refs/remotes/origin/main")
+	r.git("rebase", "-q", "origin/main", "api")
+	requireEqual(t, r.baseOf("api"), stale, "base left behind by the rebase")
+
+	out := r.stk("--no-interactive", "sync", "--no-cleanup")
+	requireContains(t, out, "Moved the base of api up to")
+	requireEqual(t, r.baseOf("api"), landed, "base repaired")
+	requireEqual(t, len(r.log("api")) > 0, true, "branch kept its commits")
+
+	// Nothing left to repair the second time.
+	requireNotContains(t, r.stk("--no-interactive", "sync", "--no-cleanup"), "Moved the base")
+}
+
+func TestSyncDryRunOnlyReportsAStaleBase(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	stale := r.baseOf("api")
+	r.pushRemoteCommit(r.upstreamClone(), "landed elsewhere")
+	r.git("fetch", "-q", "origin")
+	r.git("rebase", "-q", "origin/main", "api")
+
+	out := r.stk("--no-interactive", "--dry-run", "sync", "--no-cleanup")
+	requireContains(t, out, "would move the base of api up to")
+	requireEqual(t, r.baseOf("api"), stale, "base untouched")
+}
+
+func TestSyncLeavesTheBaseOfALandedBranchToCleanup(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+	r.git("push", "-q", "origin", "api:main")
+
+	requireNotContains(t, r.stk("--no-interactive", "sync", "--no-cleanup"), "Moved the base")
+}

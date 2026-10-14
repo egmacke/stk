@@ -249,3 +249,22 @@ func lineContaining(t *testing.T, text, needle string) string {
 	t.Fatalf("no line containing %q in:\n%s", needle, text)
 	return ""
 }
+
+// A worktree branched off a freshly fetched origin/main while local main sat
+// behind. Tracking it against the stale local main would record a base below
+// commits that are already on trunk, and every later range from that base
+// would claim them.
+func TestTrackOntoTrunkUsesTheFresherRemoteTrunk(t *testing.T) {
+	r := newRepoWithRemote(t)
+	movedRemoteBranch(r, "main", "landed elsewhere")
+	r.git("fetch", "-q", "origin")
+	fresh := r.sha("refs/remotes/origin/main")
+	requireEqual(t, r.sha("main") == fresh, false, "local main is stale")
+
+	wt := filepath.Join(filepath.Dir(r.Root), "wt-api")
+	r.git("worktree", "add", "-q", "-b", "api", wt, "origin/main")
+	r.runIn(wt, "", "git", "commit", "-q", "--allow-empty", "-m", "api")
+	r.stkAt(wt, "", "track", "api", "--parent", "main")
+
+	requireEqual(t, r.baseOf("api"), fresh, "base is where api left origin/main")
+}

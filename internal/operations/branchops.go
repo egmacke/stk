@@ -163,6 +163,9 @@ func Track(env *Env, g *stack.Graph, name, parentName string) error {
 		return fmt.Errorf("%s and %s have no common ancestor, so stk cannot tell which commits belong to %s",
 			parent.Name, child.Name, child.Name)
 	}
+	if parent.IsTrunk {
+		base = fresherTrunkBase(env, child, base)
+	}
 
 	id := child.ID
 	if !child.Tracked || id == "" {
@@ -183,6 +186,29 @@ func Track(env *Env, g *stack.Graph, name, parentName string) error {
 	env.Out.OK("Tracking %s with parent %s", output.BranchName(child.Name), output.BranchName(parent.Name))
 	mirrorGHStack(env, ghSyncOptions{})
 	return nil
+}
+
+// fresherTrunkBase moves a trunk child's base up to where the branch left
+// trunk, local or remote, whichever is newer.
+//
+// A branch made in a worktree is usually cut from a freshly fetched remote
+// trunk while the local trunk, checked out nowhere or in another worktree,
+// sits behind; a branch moved onto a newer trunk by hand keeps the base it
+// had. Either way the base sits below commits that are already on trunk, and
+// every range taken from it would claim them as the branch's own.
+func fresherTrunkBase(env *Env, child *stack.Branch, base string) string {
+	trunks := []string{"refs/heads/" + env.Cfg.Trunk}
+	if remote, ok := env.Repo.RemoteBranchSHA(env.Cfg.Remote, env.Cfg.Trunk); ok {
+		trunks = append(trunks, remote)
+	}
+	for _, trunk := range trunks {
+		fresher, err := env.Repo.MergeBase(trunk, "refs/heads/"+child.Name)
+		if err != nil || fresher == base || !env.Repo.IsAncestor(base, fresher) {
+			continue
+		}
+		base = fresher
+	}
+	return base
 }
 
 // UntrackOptions configures stk untrack.

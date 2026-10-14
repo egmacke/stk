@@ -53,16 +53,8 @@ func (repo *Repo) RemoteBranchSHA(remote, branch string) (string, bool) {
 //
 // The branch is named explicitly, so pushing never depends on what this
 // worktree has checked out.
-//
-// push.negotiate has the client and remote agree on the commits they share
-// before the pack is built. Without it git trusts only the remote's advertised
-// branch tips, and when it has none of them (trunk moved since the last fetch,
-// a shallow clone, a proxy that hides refs) it sends commits the remote already
-// has. GitHub then reports those commits in the push event, and integrations
-// that link work from commit messages link every ticket they mention. A remote
-// that cannot negotiate costs a warning, and the push goes ahead as before.
 func (repo *Repo) Push(remote, branch, lease string, force, setUpstream bool) Result {
-	args := []string{"-c", "push.negotiate=true", "push"}
+	args := []string{"push"}
 	switch {
 	case force:
 		args = append(args, "--force")
@@ -99,10 +91,14 @@ func (repo *Repo) RemoteURL(remote string) string {
 	return res.Out()
 }
 
-// CommitSubjects lists the subject lines of the commits in from..to, oldest
-// first.
-func (repo *Repo) CommitSubjects(from, to string) []string {
-	res := repo.R.Run("log", "--reverse", "--no-merges", "--format=%s", from+".."+to)
+// CommitSubjects lists the subject lines of the commits reachable from to but
+// from none of exclude, oldest first.
+func (repo *Repo) CommitSubjects(to string, exclude ...string) []string {
+	args := []string{"log", "--reverse", "--no-merges", "--format=%s", to}
+	if len(exclude) > 0 {
+		args = append(append(args, "--not"), exclude...)
+	}
+	res := repo.R.Run(args...)
 	if !res.OK() {
 		return nil
 	}

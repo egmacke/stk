@@ -38,36 +38,47 @@ func TestSubmitPushesTheBranch(t *testing.T) {
 	requireContains(t, out, "Nothing to push")
 }
 
-func TestSubmitFetchesTrunkBeforeCreatingARemoteBranch(t *testing.T) {
+func TestSubmitFetchesTrunkBeforeOpeningAPullRequest(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
 	movedRemoteBranch(r, "main", "landed elsewhere")
 	landed := r.gitAt(r.Origin, "rev-parse", "main")
 	requireEqual(t, r.sha("refs/remotes/origin/main") == landed, false, "trunk is stale before submit")
+	r.stubGH()
+	r.useGitHubURL()
 
-	r.stk("submit")
-	requireEqual(t, r.sha("refs/remotes/origin/main"), landed, "trunk fetched before the push")
+	r.stk("submit", "--pull", "--no-prompt")
+	requireEqual(t, r.sha("refs/remotes/origin/main"), landed, "trunk fetched before the body was written")
 	requireEqual(t, r.sha("main") == landed, false, "local trunk left alone")
 }
 
-func TestSubmitSkipsTheTrunkFetchWhenNothingIsNew(t *testing.T) {
+func TestSubmitSkipsTheTrunkFetchWithoutAPullRequestToOpen(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
-	r.stk("submit")
-	r.commit("api2.txt", "more\n", "api more")
+	movedRemoteBranch(r, "main", "landed elsewhere")
 
 	res := r.stkAt(r.Root, "", "--verbose", "submit")
-	requireContains(t, res.All(), "Pushed api to origin (updated)")
+	requireContains(t, res.All(), "Pushed api to origin (created)")
 	requireNotContains(t, res.All(), "git fetch")
+	requireNotContains(t, res.All(), "push.negotiate")
 }
 
-func TestSubmitNegotiatesTheCommitsItPushes(t *testing.T) {
+// The branch was moved onto origin/main by hand, so its recorded base is still
+// the stale local main. The commits between the two are already on trunk, and
+// listing them would credit the pull request with other people's work.
+func TestSubmitBodyLeavesOutCommitsAlreadyOnRemoteTrunk(t *testing.T) {
 	r := newRepoWithRemote(t)
 	buildStack(r, "api")
+	movedRemoteBranch(r, "main", "[sc-1] landed elsewhere")
+	r.git("fetch", "-q", "origin")
+	r.git("rebase", "-q", "origin/main", "api")
+	r.stubGH()
+	r.useGitHubURL()
 
-	res := r.stkAt(r.Root, "", "--verbose", "submit")
-	requireContains(t, res.All(), "git -c push.negotiate=true push")
-	requireContains(t, res.All(), "Pushed api to origin (created)")
+	requireContains(t, r.stk("submit", "--pull", "--no-prompt"), "Opened pull request #1")
+	calls := r.ghCallLog()
+	requireContains(t, calls, "--body - api")
+	requireNotContains(t, calls, "landed elsewhere")
 }
 
 func TestSubmitRecordsAMissingUpstreamWithoutPushing(t *testing.T) {

@@ -103,8 +103,10 @@ func Submit(env *Env, g *stack.Graph, target *stack.Branch, opts SubmitOptions) 
 		if drafts, err = resolveDrafts(env, g, plan, missing, opts); err != nil {
 			return err
 		}
+		if len(missing) > 0 {
+			refreshTrunk(env, g, remote)
+		}
 	}
-	refreshTrunk(env, g, remote, plan)
 	pushed := 0
 	linked := 0
 	opened := 0
@@ -271,25 +273,18 @@ func openForge(env *Env, remote string) (*forge.GH, error) {
 	return gh, nil
 }
 
-// refreshTrunk fetches trunk before a push that creates a remote branch.
+// refreshTrunk fetches trunk before stk writes a pull request body.
 //
-// A new branch has no remote commit to measure against, so what git sends
-// depends on the shared commits it can find, and trunk is the one most likely
-// to contain everything below the stack. Pushing against a stale trunk sends
-// commits the remote already has, and GitHub reports them as part of the new
-// branch. A failed fetch is not fatal: the push is still correct, only larger.
-func refreshTrunk(env *Env, g *stack.Graph, remote string, plan []*stack.Branch) {
+// The body lists the commits a branch adds, less whatever the remote trunk
+// already holds, so a stale remote-tracking trunk would let commits that
+// landed since the last fetch back in. A failed fetch is not fatal: the body
+// is still written, only against an older trunk.
+func refreshTrunk(env *Env, g *stack.Graph, remote string) {
 	if env.DryRun {
 		return
 	}
-	for _, b := range plan {
-		if _, exists := env.Repo.RemoteBranchSHA(remote, b.Name); exists {
-			continue
-		}
-		if err := env.Repo.FetchBranch(remote, g.Trunk.Name); err != nil {
-			env.Out.Fail("could not fetch %s from %s before pushing: %v", g.Trunk.Name, remote, err)
-		}
-		return
+	if err := env.Repo.FetchBranch(remote, g.Trunk.Name); err != nil {
+		env.Out.Fail("could not fetch %s from %s before writing pull requests: %v", g.Trunk.Name, remote, err)
 	}
 }
 
@@ -541,7 +536,7 @@ func aboveCut(ordered []*stack.Branch, cut *stack.Branch) string {
 // pullRequestText settles on the title and body: generated outright with
 // --no-prompt, otherwise offered to the user to accept or replace.
 func pullRequestText(env *Env, b *stack.Branch, base string, opts SubmitOptions) (string, string, error) {
-	subjects := env.Repo.CommitSubjects(b.Base, b.SHA)
+	subjects := ownCommitSubjects(env, b)
 	body := bulletBody(subjects)
 	if opts.NoPrompt {
 		return generatedTitle(env.Cfg.PRTitle, b, subjects), body, nil
@@ -558,6 +553,29 @@ func pullRequestText(env *Env, b *stack.Branch, base string, opts SubmitOptions)
 		title = subjects[0]
 	}
 	return env.AskPullRequest(b, title, body)
+}
+
+// ownCommitSubjects lists the commits a branch adds, for its pull request.
+//
+// The recorded base alone is not enough. A branch moved onto a newer trunk
+// outside stk, or tracked against a local trunk that had fallen behind, keeps
+// a base below commits that are already on trunk. Those belong to other pull
+// requests, and a body that lists them hands every ticket they mention to
+// integrations that read it. Anything the remote trunk already holds is left
+// out; submit has just fetched it.
+func ownCommitSubjects(env *Env, b *stack.Branch) []string {
+	var exclude []string
+	if b.Base != "" {
+		exclude = append(exclude, b.Base)
+	}
+	if sha, ok := env.Repo.RemoteBranchSHA(env.Cfg.Remote, env.Cfg.Trunk); ok {
+		exclude = append(exclude, sha)
+	}
+	if len(exclude) == 0 {
+		// With nothing to stop at, the whole history would be listed.
+		return nil
+	}
+	return env.Repo.CommitSubjects(b.SHA, exclude...)
 }
 
 // generatedTitle names a pull request stk opens without being able to ask.

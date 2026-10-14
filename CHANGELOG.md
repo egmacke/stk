@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/egmacke/stk/compare/v1.9.0...v1.9.1) (2026-10-14)
+
+
+### Bug fixes
+
+* keep commits already on trunk out of generated pull request bodies ([#34](https://github.com/egmacke/stk/issues/34)) ([b71326d](https://github.com/egmacke/stk/commit/b71326dd972f8e8643c6272fccfa8fbe775d42b2))
+
 ## [1.9.0](https://github.com/egmacke/stk/compare/v1.8.0...v1.9.0) (2026-09-29)
 
 

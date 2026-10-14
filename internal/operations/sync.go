@@ -93,6 +93,11 @@ func Sync(env *Env, opts SyncOptions) error {
 	if trunkSHA == "" {
 		trunkSHA = g.Trunk.SHA
 	}
+	if repairTrunkBases(env, g) > 0 && !env.DryRun {
+		if g, err = stack.Load(repo, cfg); err != nil {
+			return err
+		}
+	}
 
 	if opts.Cleanup != CleanupNever {
 		if err := cleanup(env, g, trunkSHA, opts); err != nil {
@@ -153,6 +158,39 @@ func Sync(env *Env, opts SyncOptions) error {
 		Stash:       stash,
 	})
 	return err
+}
+
+// repairTrunkBases moves up the base of every trunk child that sits below
+// commits already on trunk, and returns how many it moved.
+//
+// Such a base claims trunk's commits as the branch's own: they would be listed
+// in its pull request and replayed by its next restack. Tracking now records
+// the right base, but branches tracked earlier, or moved onto trunk by hand,
+// still carry the old one, and sync is where trunk has just been brought up
+// to date.
+func repairTrunkBases(env *Env, g *stack.Graph) int {
+	moved := 0
+	for _, b := range g.Tracked {
+		if b.Parent == nil || !b.Parent.IsTrunk || b.BaseMissing || b.SHA == "" {
+			continue
+		}
+		fresher := fresherTrunkBase(env, b, b.Base)
+		// A branch wholly on trunk has landed; that is cleanup's to decide.
+		if fresher == b.Base || fresher == b.SHA {
+			continue
+		}
+		moved++
+		if env.DryRun {
+			env.Out.Dry("would move the base of %s up to %s, already on %s", output.BranchName(b.Name), fresher[:7], g.Trunk.Name)
+			continue
+		}
+		if err := stack.SetBase(env.Repo, b.ID, fresher); err != nil {
+			env.Out.Fail("could not move the base of %s: %v", b.Name, err)
+			continue
+		}
+		env.Out.OK("Moved the base of %s up to %s, already on %s", output.BranchName(b.Name), fresher[:7], g.Trunk.Name)
+	}
+	return moved
 }
 
 // ghStackScope picks the stacks stk sync settles on GitHub: with --stack the

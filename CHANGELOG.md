@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.0](https://github.com/egmacke/stk/compare/v1.9.1...v1.10.0) (2026-10-19)
+
+
+### Features
+
+* bold the picker's selection and jump to the best match while filtering ([#37](https://github.com/egmacke/stk/issues/37)) ([72d516c](https://github.com/egmacke/stk/commit/72d516ceddc3085145c28cd5eef966a137fcbe1f))
+* warn about stacks a restack had to leave behind ([#36](https://github.com/egmacke/stk/issues/36)) ([83a54cf](https://github.com/egmacke/stk/commit/83a54cfab3349ea814a9c73d374b8c0763b99e09))
+
 ## [1.9.1](https://github.com/egmacke/stk/compare/v1.9.0...v1.9.1) (2026-10-14)
 
 

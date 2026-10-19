@@ -258,6 +258,7 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 	} else {
 		env.Out.Printf("%s", summarise(sum))
 	}
+	warnOffStackBlocked(env, op, g, blocked, offStack)
 	// Back on the original branch, so the parked changes land where they were
 	// taken from.
 	op.Autostash().Restore(env)
@@ -303,6 +304,30 @@ func offStackTest(g *stack.Graph, op *Operation) func(*stack.Branch) bool {
 		}
 	}
 	return func(b *stack.Branch) bool { return !home[b.ID] }
+}
+
+// warnOffStackBlocked names the stacks a restack had to leave behind, once the
+// run is over, so they are not lost among the per-branch lines above. Only the
+// branch where each stack stopped is named: everything above it waits on it.
+func warnOffStackBlocked(env *Env, op *Operation, g *stack.Graph, blocked map[string]bool, offStack func(*stack.Branch) bool) {
+	var stuck []string
+	for _, step := range op.Branches {
+		b := g.ByID[step.BranchID]
+		if b == nil || !blocked[b.ID] || !offStack(b) {
+			continue
+		}
+		if b.Parent != nil && blocked[b.Parent.ID] {
+			continue
+		}
+		stuck = append(stuck, output.BranchName(b.Name))
+	}
+	if len(stuck) == 0 {
+		return
+	}
+	env.Out.Warnf("")
+	env.Out.Warnf("%d stack(s) could not be restacked cleanly and need restacking by hand: %s",
+		len(stuck), strings.Join(stuck, ", "))
+	env.Out.Warnf("  Check out each branch and run %s.", output.Command("stk restack"))
 }
 
 // blockOffStack reports a branch on another stack that could not be restacked,

@@ -474,10 +474,13 @@ func TestSyncIsNotBlockedByAConflictOnAnotherStack(t *testing.T) {
 	r.pushRemoteCommit(clone, "remote work")
 	bTip := r.sha("one/b")
 
-	out := r.stk("--no-interactive", "sync", "--no-cleanup")
+	res := r.stkAt(r.Root, "", "--no-interactive", "sync", "--no-cleanup")
+	requireEqual(t, res.Code, 0, "sync exit code")
+	out := res.All()
 	requireContains(t, out, "one/b blocked: conflict while rebasing onto one/a")
 	requireContains(t, out, "Check it out and run stk restack")
 	requireNotContains(t, out, "stk continue")
+	requireContains(t, out, "1 stack(s) could not be restacked cleanly and need restacking by hand: one/b")
 
 	requireContains(t, strings.Join(r.log("two"), "\n"), "remote work")
 	requireEqual(t, r.sha("one/b"), bTip, "the conflicting branch was left as it was")
@@ -508,8 +511,9 @@ func TestRestackFromTrunkReportsAConflictingStack(t *testing.T) {
 	r.commit("main.txt", "main moved\n", "main moved")
 	bTip := r.sha("one/b")
 
-	out := r.stk("restack")
+	out := r.stkAt(r.Root, "", "restack").All()
 	requireContains(t, out, "one/b blocked: conflict while rebasing onto one/a")
+	requireContains(t, out, "need restacking by hand: one/b")
 	requireEqual(t, r.log("two")[1], "main moved", "the other stack was restacked")
 	requireEqual(t, r.sha("one/b"), bTip, "the conflicting branch was left as it was")
 	requireEqual(t, r.currentBranch(), "main", "original branch restored")

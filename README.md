@@ -1030,8 +1030,11 @@ stk move web                # picker: Move web onto
 ```
 
 The picker opens on the branch you are already on, not on trunk, so pressing
-enter straight away changes nothing. Typing filters the list, and the highlight
-stays on its branch for as long as that branch still matches.
+enter straight away changes nothing. The highlighted row is drawn in bold.
+Typing filters the list and moves the highlight to the best match: an exact
+name first, then a name that starts with what you typed, then one where a
+segment does (`co` finds `feat/better-co`), then any other match. Clearing the
+filter leaves the highlight where it was.
 
 Dismissing a prompt changes nothing and exits successfully. With
 `--no-interactive` the missing value stays an error, so scripts still fail

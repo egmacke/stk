@@ -66,8 +66,9 @@ func (m *pickerModel) Init() tea.Cmd { return nil }
 
 // rebuild recomputes the visible rows for the current filter.
 //
-// The cursor follows the branch it was on when that branch survives the
-// filter, so typing does not silently move the selection onto a neighbour.
+// While a filter is typed the cursor jumps to the best match, so enter takes
+// the branch the search most plausibly meant. With no filter it follows the
+// branch it was on, so clearing a search does not lose the place.
 func (m *pickerModel) rebuild() {
 	g := m.opts.Graph
 	var under *stack.Branch
@@ -111,7 +112,9 @@ func (m *pickerModel) rebuild() {
 	m.rows = rows
 	m.lines = RenderRows(rows, g.Current, g.Dirty())
 	m.cursor = 0
-	if under != nil {
+	if best := bestMatch(rows, needle); best >= 0 {
+		m.cursor = best
+	} else if under != nil {
 		for i, r := range rows {
 			if r.Selectable && r.Branch == under {
 				m.cursor = i
@@ -120,6 +123,71 @@ func (m *pickerModel) rebuild() {
 		}
 	}
 	m.snapToSelectable(1)
+}
+
+// bestMatch returns the index of the selectable row whose branch name best
+// matches needle, or -1 when needle is empty or nothing matches. Rows drawn
+// only as the path to a match do not count.
+//
+// An exact name beats a prefix, a prefix beats a match at the start of a
+// segment such as the part after "feat/", and any of those beats a match
+// in the middle of a word. Ties go to the earlier match, then the shorter
+// name, then the row drawn first.
+func bestMatch(rows []Row, needle string) int {
+	if needle == "" {
+		return -1
+	}
+	best, bestScore, bestAt, bestLen := -1, 0, 0, 0
+	for i, r := range rows {
+		if !r.Selectable || r.Branch == nil {
+			continue
+		}
+		name := strings.ToLower(r.Branch.Name)
+		at := strings.Index(name, needle)
+		if at < 0 {
+			continue
+		}
+		score := 3
+		switch {
+		case name == needle:
+			score = 0
+		case at == 0:
+			score = 1
+		default:
+			for j := at; j >= 0; j = nextIndex(name, needle, j) {
+				if strings.ContainsRune("/-_.", rune(name[j-1])) {
+					score, at = 2, j
+					break
+				}
+			}
+		}
+		n := len(name)
+		if best < 0 || score < bestScore ||
+			(score == bestScore && (at < bestAt || (at == bestAt && n < bestLen))) {
+			best, bestScore, bestAt, bestLen = i, score, at, n
+		}
+	}
+	return best
+}
+
+// nextIndex returns where needle next occurs in s after position from, or -1.
+func nextIndex(s, needle string, from int) int {
+	i := strings.Index(s[from+1:], needle)
+	if i < 0 {
+		return -1
+	}
+	return from + 1 + i
+}
+
+// emphasise renders a whole picker line bold. The line already carries its
+// own styling, and every reset in it would end the bold early, so bold is
+// switched back on after each one.
+func emphasise(line string) string {
+	if !output.ColorEnabled() {
+		return line
+	}
+	const bold, reset = "\x1b[1m", "\x1b[0m"
+	return bold + strings.ReplaceAll(line, reset, reset+bold) + reset
 }
 
 // cursorToCurrent opens the picker on the branch the user is standing on.
@@ -268,11 +336,12 @@ func (m *pickerModel) View() tea.View {
 		end = len(m.lines)
 	}
 	for i := m.offset; i < end; i++ {
-		marker := "  "
+		marker, line := "  ", m.lines[i]
 		if i == m.cursor {
 			marker = output.Cyan(output.Bold("> "))
+			line = emphasise(line)
 		}
-		fmt.Fprintf(&b, "%s%s\n", marker, m.lines[i])
+		fmt.Fprintf(&b, "%s%s\n", marker, line)
 	}
 	if len(m.lines) == 0 {
 		b.WriteString(output.Dim("  no matching branches") + "\n")

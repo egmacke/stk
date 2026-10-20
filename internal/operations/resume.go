@@ -50,6 +50,7 @@ func Continue(env *Env) error {
 	if err != nil {
 		return err
 	}
+	op.applyTrunkTip(g)
 
 	// The branch at the recorded position is the one that just finished.
 	if op.Position < len(op.Branches) {
@@ -69,8 +70,9 @@ func Continue(env *Env) error {
 
 // restoreBranch puts one branch back at the commit the operation snapshotted.
 //
-// A branch the operation rewrote inside another worktree is put back the same
-// way, so that worktree's index and files come back with the ref rather than
+// stk never rewrites a branch another worktree holds, but one may have been
+// checked out there while the operation was paused. It is put back through
+// that worktree, so its index and files come back with the ref rather than
 // being left describing the rewritten history. Uncommitted work appearing
 // there since is not stk's to discard, so the ref moves alone and the mismatch
 // is reported instead.

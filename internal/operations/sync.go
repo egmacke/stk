@@ -2,6 +2,7 @@ package operations
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -82,12 +83,21 @@ func Sync(env *Env, opts SyncOptions) error {
 		env.Out.Warnf("Remote %q is not configured; skipping fetch.", cfg.Remote)
 	}
 
-	trunkSHA, err := updateTrunk(env)
+	trunkSHA, trunkHeld, err := updateTrunk(env)
 	if err != nil {
 		return err
 	}
+	// A trunk left alone in another worktree is stood in for by the remote
+	// trunk, so the stacks still land on what was just fetched.
+	load := func() (*stack.Graph, error) {
+		g, err := stack.Load(repo, cfg)
+		if err == nil && trunkHeld {
+			g.Trunk.SHA = trunkSHA
+		}
+		return g, err
+	}
 
-	g, err := stack.Load(repo, cfg)
+	g, err := load()
 	if err != nil {
 		return err
 	}
@@ -95,7 +105,7 @@ func Sync(env *Env, opts SyncOptions) error {
 		trunkSHA = g.Trunk.SHA
 	}
 	if repairTrunkBases(env, g) > 0 && !env.DryRun {
-		if g, err = stack.Load(repo, cfg); err != nil {
+		if g, err = load(); err != nil {
 			return err
 		}
 	}
@@ -108,7 +118,7 @@ func Sync(env *Env, opts SyncOptions) error {
 		if _, err := syncGHStack(env, ghSyncOptions{}); err != nil {
 			return err
 		}
-		if g, err = stack.Load(repo, cfg); err != nil {
+		if g, err = load(); err != nil {
 			return err
 		}
 	}
@@ -117,7 +127,7 @@ func Sync(env *Env, opts SyncOptions) error {
 		if err := cleanup(env, g, trunkSHA, opts); err != nil {
 			return err
 		}
-		if g, err = stack.Load(repo, cfg); err != nil {
+		if g, err = load(); err != nil {
 			return err
 		}
 	}
@@ -131,7 +141,7 @@ func Sync(env *Env, opts SyncOptions) error {
 		return err
 	}
 	refreshGHPullRequests(env)
-	if g, err = stack.Load(repo, cfg); err != nil {
+	if g, err = load(); err != nil {
 		return err
 	}
 	// Last of the three, because it is the only one that asks GitHub about the
@@ -170,6 +180,7 @@ func Sync(env *Env, opts SyncOptions) error {
 		Heading:     "Restacking...",
 		DoneMessage: "All stacks are up to date.",
 		Stash:       stash,
+		TrunkTip:    trunkTip(trunkHeld, trunkSHA),
 	})
 	return err
 }
@@ -217,33 +228,45 @@ func ghStackScope(g *stack.Graph, opts SyncOptions) (*stack.Branch, bool) {
 	return g.Current, g.Current != nil
 }
 
+// trunkTip is the commit a sync restacks onto in place of the local trunk, or
+// "" for the local trunk itself.
+func trunkTip(held bool, sha string) string {
+	if held {
+		return sha
+	}
+	return ""
+}
+
 // updateTrunk fast-forwards the local trunk ref to its remote counterpart and
 // returns the commit trunk ends up at.
 //
-// It works whether trunk is checked out here, in another worktree, or nowhere,
-// and it refuses to touch a trunk that has diverged from the remote.
-func updateTrunk(env *Env) (string, error) {
+// It works whether trunk is checked out here or nowhere, and it refuses to
+// touch a trunk that has diverged from the remote. A trunk checked out in
+// another worktree is that worktree's, so it is left where it is: held is
+// then true, and the commit returned is the remote trunk, for the sync to
+// work from instead.
+func updateTrunk(env *Env) (sha string, held bool, err error) {
 	repo := env.Repo
 	trunk := env.Cfg.Trunk
 	if env.Cfg.Remote == "" {
-		return "", nil
+		return "", false, nil
 	}
 	remoteRef := "refs/remotes/" + env.Cfg.Remote + "/" + trunk
 	remoteSHA, err := repo.RevParse(remoteRef)
 	if err != nil {
 		env.Out.Warnf("No remote branch %s/%s; leaving %s alone.", env.Cfg.Remote, trunk, trunk)
-		return "", nil
+		return "", false, nil
 	}
 	localSHA, err := repo.RevParse("refs/heads/" + trunk)
 	if err != nil {
-		return "", fmt.Errorf("trunk branch %q does not exist locally", trunk)
+		return "", false, fmt.Errorf("trunk branch %q does not exist locally", trunk)
 	}
 	if localSHA == remoteSHA {
 		env.Out.OK("%s is already up to date", output.BranchName(trunk))
-		return localSHA, nil
+		return localSHA, false, nil
 	}
 	if !repo.IsAncestor(localSHA, remoteSHA) {
-		return "", fmt.Errorf(
+		return "", false, fmt.Errorf(
 			"local %s has diverged from %s/%s\n\n"+
 				"stk will not overwrite it. Reconcile the two branches yourself, then run stk sync again",
 			trunk, env.Cfg.Remote, trunk)
@@ -253,38 +276,42 @@ func updateTrunk(env *Env) (string, error) {
 	if env.DryRun {
 		env.Out.Dry("would fast-forward %s by %d commit(s)", output.BranchName(trunk), count)
 		// Report what a real run would prune, not what the stale trunk holds.
-		return remoteSHA, nil
+		return remoteSHA, false, nil
 	}
 
 	worktrees, err := repo.BranchWorktrees()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	holder := worktrees[trunk]
 	switch {
+	case holder != "" && filepath.Clean(holder) != filepath.Clean(repo.Root):
+		env.Out.Skip("%s not moved: checked out in %s; working from %s/%s instead",
+			output.BranchName(trunk), holder, env.Cfg.Remote, trunk)
+		return remoteSHA, true, nil
 	case holder == "":
 		// Nobody has trunk checked out, so moving the ref is enough.
 		if err := repo.UpdateRef("refs/heads/"+trunk, remoteSHA); err != nil {
-			return "", err
+			return "", false, err
 		}
 	default:
-		// Update through the worktree that owns it so its index and files
-		// move with the ref.
+		// Checked out here, so the update goes through this worktree and its
+		// index and files move with the ref.
 		wt := repo.R.WithDir(holder)
 		status := wt.Run("status", "--porcelain", "--untracked-files=no")
 		if !status.OK() {
-			return "", status.Error()
+			return "", false, status.Error()
 		}
 		if strings.TrimSpace(status.Stdout) != "" {
 			env.Out.Skip("%s not updated: checked out with uncommitted changes in %s", output.BranchName(trunk), holder)
-			return localSHA, nil
+			return localSHA, false, nil
 		}
 		if res := wt.Mutate("merge", "--ff-only", remoteRef); !res.OK() {
-			return "", res.Error()
+			return "", false, res.Error()
 		}
 	}
 	env.Out.OK("%s fast-forwarded by %d commit(s)", output.BranchName(trunk), count)
-	return remoteSHA, nil
+	return remoteSHA, false, nil
 }
 
 // pruneCandidate is a branch stk offers to remove, and the evidence for it.

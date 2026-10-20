@@ -55,6 +55,10 @@ type Operation struct {
 	Done Summary `json:"done"`
 	// DoneMessage is the wording used when the operation finishes cleanly.
 	DoneMessage string `json:"doneMessage,omitempty"`
+	// TrunkTip, when set, stands in for the local trunk as the commit the
+	// branches on trunk are restacked onto. stk sync sets it to the remote
+	// trunk when it leaves a trunk checked out in another worktree alone.
+	TrunkTip string `json:"trunkTip,omitempty"`
 	// Cleanup carries sync work that must still happen after the restack
 	// portion of a sync operation finishes.
 	SyncRestackRemaining bool `json:"syncRestackRemaining,omitempty"`
@@ -64,6 +68,14 @@ type Operation struct {
 	AutostashSHA   string `json:"autostashSha,omitempty"`
 	AutostashRef   string `json:"autostashRef,omitempty"`
 	AutostashLabel string `json:"autostashLabel,omitempty"`
+}
+
+// applyTrunkTip points the graph's trunk at the commit the operation
+// restacks onto, when that is not the local trunk.
+func (op *Operation) applyTrunkTip(g *stack.Graph) {
+	if op.TrunkTip != "" && g.Trunk != nil {
+		g.Trunk.SHA = op.TrunkTip
+	}
 }
 
 // Autostash returns the changes parked for this operation, or nil when the

@@ -94,6 +94,8 @@ type RestackOptions struct {
 	Heading string
 	// DoneMessage is printed when nothing needed changing.
 	DoneMessage string
+	// TrunkTip, when set, is restacked onto in place of the local trunk.
+	TrunkTip string
 	// Stash hands over changes the caller has already parked, for operations
 	// such as move that must clear the working tree before they touch
 	// metadata. Restack parks its own when this is nil.
@@ -159,7 +161,9 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 		PrevBases:      map[string]string{},
 		RebaseMerges:   opts.RebaseMerges,
 		DoneMessage:    opts.DoneMessage,
+		TrunkTip:       opts.TrunkTip,
 	}
+	op.applyTrunkTip(g)
 	op.AdoptAutostash(stash)
 	if g.Current != nil {
 		op.OriginalBranchID = g.Current.ID
@@ -221,12 +225,6 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 			env.Out.OK("%s", output.BranchName(b.Name))
 		case OutcomeRestacked:
 			sum.Restacked++
-			if b.CheckedOutElsewhere() {
-				// Worth saying: the rewrite happened in a directory the user
-				// is not standing in, and took its files with it.
-				env.Out.OK("%s %s", output.BranchName(b.Name), output.Dim("in "+b.Worktree))
-				break
-			}
 			env.Out.OK("%s", output.BranchName(b.Name))
 		case OutcomeMerged:
 			sum.Restacked++
@@ -383,23 +381,15 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 		return OutcomeCurrent, nil
 	}
 
-	// From here the branch must be rewritten. A worktree holding it elsewhere
-	// does not make it untouchable: the rewrite simply happens inside that
-	// worktree, so its index and files move with the ref instead of being left
-	// describing a commit that is no longer the branch. It is the same route
-	// stk sync already takes to fast-forward a trunk checked out elsewhere.
-	rebaseIn := ""
+	// From here the branch must be rewritten. A branch another worktree holds
+	// is that worktree's: stk works in the worktree it is run from, and never
+	// moves files under a checkout the user is not standing in. The branch and
+	// everything above it are left for a restack run from there.
 	if b.CheckedOutElsewhere() {
-		reason, err := worktreeUnavailable(repo, b.Worktree)
-		if err != nil {
-			return "", err
-		}
-		if reason != "" {
-			blocked[b.ID] = true
-			env.Out.Skip("%s skipped: %s", output.BranchName(b.Name), reason)
-			return OutcomeSkipped, nil
-		}
-		rebaseIn = b.Worktree
+		blocked[b.ID] = true
+		env.Out.Skip("%s skipped: %s\n  Restack it by running stk restack from that worktree.",
+			output.BranchName(b.Name), heldElsewhere(b))
+		return OutcomeSkipped, nil
 	}
 
 	// A squash merge lands a branch's content under a commit of its own, so
@@ -458,11 +448,8 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 		return "", err
 	}
 
-	res := repo.RebaseIn(rebaseIn, newBase, oldBase, b.Name, op.RebaseMerges)
+	res := repo.Rebase(newBase, oldBase, b.Name, op.RebaseMerges)
 	if !res.OK() {
-		if rebaseIn != "" {
-			return conflictElsewhere(env, res, b, parent, rebaseIn, blocked)
-		}
 		if repo.RebaseInProgress() && offStack {
 			// Paused here, this rebase would hold up every stack after it
 			// for the sake of one the user is not working on.
@@ -492,47 +479,9 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 	return OutcomeRestacked, nil
 }
 
-// worktreeUnavailable says why a branch another worktree holds cannot be
-// rewritten there, or "" when it can.
-//
-// stk disturbs no working tree it is not standing in, so uncommitted changes
-// leave the branch alone, and so does a git operation the other worktree is
-// already part-way through.
-func worktreeUnavailable(repo *git.Repo, dir string) (string, error) {
-	clean, err := repo.WorktreeClean(dir)
-	if err != nil {
-		return "", err
-	}
-	if !clean {
-		return "checked out with uncommitted changes in " + dir, nil
-	}
-	if repo.WorktreeBusy(dir) {
-		return "checked out in " + dir + ", which is part-way through a git operation", nil
-	}
-	return "", nil
-}
-
-// conflictElsewhere handles a rebase that stopped inside another worktree.
-//
-// A conflict is only stk's to pause where the journal lives: stk continue and
-// stk abort belong to one worktree, and a rebase left paused in another would
-// wedge a checkout the user never pointed stk at. So the rebase is undone
-// there, the branch is reported blocked along with its descendants, and the
-// resolution is left to a restack run from that worktree, where the conflict
-// can be paused and continued properly.
-func conflictElsewhere(env *Env, res git.Result, b, parent *stack.Branch, dir string, blocked map[string]bool) (Outcome, error) {
-	repo := env.Repo
-	if !repo.RebaseInProgressIn(dir) {
-		echoGit(env, res)
-		return "", fmt.Errorf("rebasing %s onto %s in %s failed: %w", b.Name, parent.Name, dir, res.Error())
-	}
-	if err := repo.AbortRebaseIn(dir); err != nil {
-		return "", fmt.Errorf("could not abort the conflicting rebase of %s in %s: %w", b.Name, dir, err)
-	}
-	blocked[b.ID] = true
-	env.Out.Skip("%s blocked: conflict while rebasing in %s\n  Resolve it by running stk restack from that worktree.",
-		output.BranchName(b.Name), dir)
-	return OutcomeBlocked, nil
+// heldElsewhere says where a branch another worktree holds is checked out.
+func heldElsewhere(b *stack.Branch) string {
+	return "checked out in " + b.Worktree
 }
 
 // trunkOf walks up to the trunk node above a branch.
@@ -573,11 +522,6 @@ func resetBranch(env *Env, b *stack.Branch, sha string) error {
 	if repo.CurrentBranch() == b.Name {
 		// The working tree is clean by now, so this discards nothing.
 		return repo.R.Mutate("reset", "--hard", "--quiet", sha).Error()
-	}
-	if b.CheckedOutElsewhere() {
-		// Proved clean before the branch was accepted for rewriting, so this
-		// discards nothing there either.
-		return repo.ResetHardIn(b.Worktree, sha)
 	}
 	return repo.UpdateRef("refs/heads/"+b.Name, sha)
 }
@@ -676,21 +620,12 @@ func PrintDryRun(env *Env, g *stack.Graph, plan []*stack.Branch) {
 			blocked[b.ID] = true
 			action = "blocked: " + b.Parent.Name + " could not be processed"
 		case b.NeedsRestack() || willRewrite[b.Parent.ID]:
-			action = "rebase onto " + b.Parent.Name
 			if b.CheckedOutElsewhere() {
-				// Said plainly, because the rebase would run in a directory
-				// other than the one the user is standing in.
-				reason, err := worktreeUnavailable(env.Repo, b.Worktree)
-				if err != nil || reason != "" {
-					if err != nil {
-						reason = "checked out in " + b.Worktree
-					}
-					blocked[b.ID] = true
-					action = "skipped: " + reason
-					break
-				}
-				action += " (in " + b.Worktree + ")"
+				blocked[b.ID] = true
+				action = "skipped: " + heldElsewhere(b)
+				break
 			}
+			action = "rebase onto " + b.Parent.Name
 			willRewrite[b.ID] = true
 		default:
 			action = "no changes required"

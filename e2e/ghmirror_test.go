@@ -174,7 +174,9 @@ func TestGHStackMirrorRecordsPullRequestsOnSubmit(t *testing.T) {
 
 func TestGHStackMirrorSyncRefreshesPullRequestState(t *testing.T) {
 	r := githubStacksRepo(t, "api", "service")
-	r.stk("ss", "-pn")
+	// Unlinked, so there is no stack on GitHub to read the merge from: each
+	// pull request is asked about.
+	r.stk("ss", "-pn", "--no-link")
 	r.mergePullRequest(1)
 
 	out := r.stk("sync", "--no-restack", "--no-cleanup")

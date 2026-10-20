@@ -631,13 +631,24 @@ With that set, `stk` and `gh stack` describe one stack, kept in step by `stk`:
   that `stk submit --pull` ends with — pull request numbers, so nothing is
   pushed and nothing is opened, and a run already stacked on GitHub is left as
   it stands — and gh stack's tracking comes back to what GitHub holds.
+- **A stack changed on GitHub is read back by `stk sync`.** Each stack already
+  linked there is read from GitHub before cleanup. Pull requests merged there
+  are marked merged, so cleanup removes their branches and reparents the rest.
+  Pull requests stacked on top there — by a colleague, or from another clone —
+  have their branches created from the remote and tracked with the parent
+  GitHub has for them. A stack whose order differs in any other way is
+  reported and left alone: for a branch `stk` tracks, its graph is the record.
+  A local branch with the same name as one to pull is never overwritten.
 
 ```console
 $ stk sync --no-restack
 Fetching origin...
 ✓ main is already up to date
+✓ Pulled ui (#3) from stack #1 on GitHub
+✓ Tracking ui with parent service (from gh stack)
+✓ gh stack tracking updated
 Checking pull requests...
-✓ #1, #2 are a stack on GitHub
+✓ #1, #2, #3 are a stack on GitHub
 ```
 
 `stk sync` settles every stack that runs from trunk to a tip without forking.

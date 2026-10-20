@@ -306,3 +306,113 @@ func TestSyncLeavesAForkedGraphToSubmit(t *testing.T) {
 	requireEqual(t, len(r.ghStubState().Stacks), 1, "one stack on GitHub")
 	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), numbers([]int{prNumber(r, "api"), prNumber(r, "other")}), "the chain through the current branch")
 }
+
+// A stack already linked on GitHub can change there too: a colleague stacks a
+// pull request on top, or the bottom one lands. stk sync reads each linked
+// stack back and brings those changes in.
+
+func TestSyncPullsABranchAddedToTheStackOnGitHub(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn")
+	requireEqual(t, r.ghStackNumbers()[0], 1, "linked")
+
+	// Somebody stacks ui on top, from another clone.
+	r.remoteOnlyBranch("ui", "service")
+	r.seedPullRequest(3, "ui", "service")
+	r.setStackOnGitHub(1, 1, 2, 3)
+
+	out := r.stk("sync", "--no-restack")
+	requireContains(t, out, "Pulled ui (#3) from stack #1 on GitHub")
+	requireContains(t, out, "Tracking ui with parent service (from gh stack)")
+	requireContains(t, r.ghCallLog(), "api /repos/example/repo/stacks/1")
+	requireEqual(t, r.parentOf("ui"), "service", "parent from GitHub")
+	requireEqual(t, r.sha("ui"), r.sha("origin/ui"), "created at the remote branch")
+	requireEqual(t, r.ghStackChains()[0], "main: api service ui", "gh stack tracking")
+
+	// Already in step: nothing more to pull.
+	out = r.stk("sync", "--no-restack")
+	requireNotContains(t, out, "Pulled")
+}
+
+func TestSyncPicksUpAMergeOnGitHub(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service", "ui")
+	r.stk("ss", "-pn")
+
+	r.mergePullRequest(1)
+
+	out := r.stk("sync", "--no-restack", "--cleanup")
+	requireContains(t, out, "api merged on GitHub")
+	requireContains(t, out, "Removed api")
+	requireEqual(t, r.branchExists("api"), false, "landed branch removed")
+	requireEqual(t, r.parentOf("service"), "main", "reparented onto trunk")
+	requireEqual(t, r.ghStackChains()[0], "main: service ui", "gh stack tracking")
+	// Still the same stack on GitHub.
+	requireEqual(t, r.ghStackNumbers()[0], 1, "stack number kept")
+}
+
+func TestSyncPullsAboveAMergeOnGitHub(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn")
+
+	// The bottom lands, and somebody stacks ui on top in the same while.
+	r.mergePullRequest(1)
+	r.remoteOnlyBranch("ui", "service")
+	r.seedPullRequest(3, "ui", "service")
+	r.setStackOnGitHub(1, 1, 2, 3)
+
+	out := r.stk("sync", "--no-restack", "--cleanup")
+	requireContains(t, out, "api merged on GitHub")
+	requireContains(t, out, "Pulled ui (#3) from stack #1 on GitHub")
+	requireEqual(t, r.parentOf("service"), "main", "reparented onto trunk")
+	requireEqual(t, r.parentOf("ui"), "service", "pulled onto service")
+}
+
+func TestSyncLeavesAStackRearrangedOnGitHubAlone(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn")
+
+	// Neither side is the bottom of the other.
+	r.remoteOnlyBranch("ui", "api")
+	r.seedPullRequest(3, "ui", "api")
+	r.setStackOnGitHub(1, 1, 3, 2)
+
+	out := r.stk("sync", "--no-restack")
+	requireContains(t, out, "stack #1 on GitHub is api, ui, service, but here it is api, service; left as it is")
+	requireNotContains(t, out, "Pulled")
+	requireEqual(t, r.branchExists("ui"), false, "nothing created")
+	requireEqual(t, r.parentOf("service"), "api", "graph unchanged")
+}
+
+func TestSyncDoesNotPullOverALocalBranch(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn")
+
+	r.remoteOnlyBranch("ui", "service")
+	r.seedPullRequest(3, "ui", "service")
+	r.setStackOnGitHub(1, 1, 2, 3)
+	r.git("branch", "ui", "main")
+
+	out := r.stk("sync", "--no-restack")
+	requireContains(t, out, "ui is on stack #1 on GitHub, but a local branch of that name already exists")
+	requireEqual(t, r.tracked("ui"), false, "left untracked")
+	requireEqual(t, r.sha("ui"), r.sha("main"), "left where it was")
+}
+
+func TestSyncNoPullsDoesNotReadTheStacks(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn")
+	r.truncateGHCallLog()
+
+	r.stk("sync", "--no-restack", "--no-pulls")
+	requireNotContains(t, r.ghCallLog(), "/stacks/")
+}
+
+func TestSyncDryRunReadsNoStacks(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service")
+	r.stk("ss", "-pn")
+	r.truncateGHCallLog()
+
+	out := r.stk("sync", "--no-restack", "--dry-run")
+	requireContains(t, out, "would check the stacks on GitHub for changes made there")
+	requireNotContains(t, r.ghCallLog(), "/stacks/")
+}

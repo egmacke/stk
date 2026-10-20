@@ -431,6 +431,28 @@ func (r *repo) linkOnGitHub(number int, base string, prs ...int) {
 	})
 }
 
+// setStackOnGitHub replaces the pull requests of a stack the stub gh holds as
+// linked, bottom first, as if somebody had changed it on GitHub.
+func (r *repo) setStackOnGitHub(number int, prs ...int) {
+	r.t.Helper()
+	r.editStubState(func(raw map[string]any) {
+		list, _ := raw["stacks"].([]any)
+		for _, item := range list {
+			st, _ := item.(map[string]any)
+			if n, _ := st["number"].(float64); int(n) != number {
+				continue
+			}
+			var nums []any
+			for _, n := range prs {
+				nums = append(nums, n)
+			}
+			st["prs"] = nums
+			return
+		}
+		r.t.Fatalf("no stack %d on GitHub", number)
+	})
+}
+
 // ghStackNumbers lists the stack number gh stack's local tracking records for
 // each stack, in order. Zero means the stack is not linked on GitHub.
 func (r *repo) ghStackNumbers() []int {

@@ -221,6 +221,39 @@ func (g *GH) LinkStack(base, remote string, numbers []int) error {
 	return err
 }
 
+// Stack is a stack of pull requests as GitHub holds it.
+type Stack struct {
+	Number int `json:"number"`
+	// Base is the branch the bottom of the stack rests on.
+	Base string `json:"base"`
+	// PullRequests are the stack's pull requests, bottom first, with only
+	// Number, Head, URL and State filled in.
+	PullRequests []PullRequest `json:"pullRequests"`
+}
+
+// Stack reads one stack by its number from GitHub's Stacks REST API, the one
+// gh stack itself reads, or returns nil when GitHub no longer has it.
+//
+// gh stack has no command that only reads a stack: gh stack sync rebases and
+// pushes as well, and gh stack checkout switches branches. The projection is
+// done by gh, so stk depends on the handful of fields it reads.
+func (g *GH) Stack(number int) (*Stack, error) {
+	out, err := g.api("GET", g.apiPath("/stacks/%d", number),
+		"--jq", `{number: .number, base: .base.ref, pullRequests: [.pull_requests[] | {number: .number, url: .html_url, headRefName: .head.ref, state: (if (.merged_at // "") != "" then "MERGED" else (.state | ascii_upcase) end)}]}`)
+	if err != nil {
+		var ce *CommandError
+		if errors.As(err, &ce) && strings.Contains(ce.Message, "HTTP 404") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var s Stack
+	if err := json.Unmarshal([]byte(out), &s); err != nil {
+		return nil, fmt.Errorf("reading gh api stack output: %w", err)
+	}
+	return &s, nil
+}
+
 // OpenPullRequest returns the open pull request whose head is branch, or nil
 // when there is none.
 func (g *GH) OpenPullRequest(branch string) (*PullRequest, error) {

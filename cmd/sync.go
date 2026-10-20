@@ -28,7 +28,10 @@ func newSyncCmd() *cobra.Command {
 			"without forking, which is how a stack linked outside this checkout — in\n" +
 			"the browser, or by a colleague — is found and recorded here. Where the\n" +
 			"graph forks there is no single stack to link, and stk submit, which is\n" +
-			"given the branch, is where that choice is made. --no-pulls skips it.",
+			"given the branch, is where that choice is made. Before cleanup it reads\n" +
+			"back each stack already linked on GitHub: pull requests merged there are\n" +
+			"marked merged, and branches stacked on top there are created from the\n" +
+			"remote and tracked. --no-pulls skips all of it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cleanup && noCleanup {

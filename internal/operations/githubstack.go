@@ -7,6 +7,7 @@ import (
 
 	"github.com/egmacke/stk/internal/config"
 	"github.com/egmacke/stk/internal/forge"
+	"github.com/egmacke/stk/internal/ghstack"
 	"github.com/egmacke/stk/internal/output"
 	"github.com/egmacke/stk/internal/stack"
 )
@@ -226,6 +227,174 @@ func syncGitHubStacks(env *Env, g *stack.Graph, target *stack.Branch) {
 			return
 		}
 	}
+}
+
+// pullGitHubStacks brings back what has changed on GitHub in the stacks linked
+// there: pull requests merged, and branches added on top of the stack — in the
+// browser, by a colleague, or from another clone.
+//
+// It reads each stack gh stack's tracking holds a number for and compares the
+// branches still under review on both sides. Where this checkout's are the
+// bottom of GitHub's, the branches above are created from the remote sync has
+// just fetched, and recorded in gh stack's tracking, so the adoption that
+// follows tracks each with the parent GitHub has for it. Any other difference
+// is reported and left alone: for a branch stk tracks, its graph is the
+// record.
+//
+// It reports whether gh stack's tracking was rewritten. Nothing here is fatal:
+// a forge stk cannot reach only means the check waits for the next run.
+func pullGitHubStacks(env *Env) bool {
+	if !env.Cfg.GitHubStacks {
+		return false
+	}
+	remote := env.Cfg.Remote
+	if remote == "" || !env.Repo.RemoteExists(remote) {
+		return false
+	}
+	// A file stk cannot read is stk doctor's to report.
+	f, err := ghstack.Load(env.Repo.CommonDir)
+	if err != nil {
+		return false
+	}
+	linked := false
+	for _, s := range f.Stacks {
+		if s.Number > 0 {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		return false
+	}
+	if env.DryRun {
+		env.Out.Dry("would check the stacks on GitHub for changes made there")
+		return false
+	}
+	gh, err := openForge(env, remote)
+	if err != nil {
+		env.Out.Warnf("Not checking the stacks on GitHub: %v", firstLine(err))
+		return false
+	}
+	changed := false
+	for i := range f.Stacks {
+		s := &f.Stacks[i]
+		if s.Number == 0 {
+			continue
+		}
+		remoteStack, err := gh.Stack(s.Number)
+		if err != nil {
+			// One repository-wide answer, as for the link.
+			env.Out.Warnf("Not checking the stacks on GitHub: %v", firstLine(err))
+			break
+		}
+		if remoteStack == nil {
+			// Unstacked on GitHub. The link at the end of the sync is what
+			// decides whether it is stacked again.
+			continue
+		}
+		if pullGitHubStack(env, s, remoteStack) {
+			changed = true
+		}
+	}
+	if !changed {
+		return false
+	}
+	if err := ghstack.Save(env.Repo.CommonDir, f); err != nil {
+		env.Out.Warnf("gh stack tracking not updated: %v", err)
+		return false
+	}
+	return true
+}
+
+// pullGitHubStack brings one stack of gh stack's tracking into step with the
+// same stack on GitHub, and reports whether it changed it.
+//
+// Merged pull requests are left out of the comparison on both sides, so a
+// branch already landed, and perhaps already removed here, is not a
+// difference. A closed one is: it is still in the stack, just not merged.
+func pullGitHubStack(env *Env, s *ghstack.Stack, remoteStack *forge.Stack) bool {
+	repo := env.Repo
+	remote := env.Cfg.Remote
+	changed := false
+
+	merged := map[string]bool{}
+	var remoteActive []forge.PullRequest
+	for _, pr := range remoteStack.PullRequests {
+		if pr.IsMerged() {
+			merged[pr.Head] = true
+			continue
+		}
+		remoteActive = append(remoteActive, pr)
+	}
+	var localActive []string
+	for j := range s.Branches {
+		ref := &s.Branches[j]
+		if merged[ref.Branch] && (ref.PullRequest == nil || !ref.PullRequest.Merged) {
+			if ref.PullRequest == nil {
+				ref.PullRequest = &ghstack.PullRequest{}
+			}
+			for _, pr := range remoteStack.PullRequests {
+				if pr.Head == ref.Branch {
+					ref.PullRequest.Number, ref.PullRequest.URL = pr.Number, pr.URL
+				}
+			}
+			ref.PullRequest.Merged = true
+			env.Out.OK("%s merged on GitHub", output.BranchName(ref.Branch))
+			changed = true
+		}
+		if ref.PullRequest == nil || !ref.PullRequest.Merged {
+			localActive = append(localActive, ref.Branch)
+		}
+	}
+
+	if len(localActive) > len(remoteActive) {
+		// Grown here; the link at the end of the sync takes it to GitHub.
+		return changed
+	}
+	for i, name := range localActive {
+		if remoteActive[i].Head != name {
+			var theirs []string
+			for _, pr := range remoteActive {
+				theirs = append(theirs, pr.Head)
+			}
+			env.Out.Skip("stack #%d on GitHub is %s, but here it is %s; left as it is",
+				s.Number, strings.Join(theirs, ", "), strings.Join(localActive, ", "))
+			return changed
+		}
+	}
+
+	// GitHub's stack carries on above this checkout's: those branches are
+	// fetched and recorded on top, one by one, until one cannot be.
+	for _, pr := range remoteActive[len(localActive):] {
+		name := pr.Head
+		if !pr.IsOpen() {
+			env.Out.Skip("%s on stack #%d on GitHub is %s closed; not pulled, nor anything above it", output.BranchName(name), s.Number, pr.String())
+			break
+		}
+		if repo.BranchExists(name) {
+			// Adopting it would claim it holds what GitHub has, which nothing
+			// here proves.
+			env.Out.Skip("%s is on stack #%d on GitHub, but a local branch of that name already exists; not pulled, nor anything above it", output.BranchName(name), s.Number)
+			break
+		}
+		if !repo.Exists("refs/remotes/" + remote + "/" + name) {
+			if err := repo.FetchBranch(remote, name); err != nil {
+				env.Out.Skip("%s is on stack #%d on GitHub, but could not be fetched from %s; not pulled, nor anything above it", output.BranchName(name), s.Number, remote)
+				break
+			}
+		}
+		if err := repo.CreateTrackingBranch(name, remote); err != nil {
+			env.Out.Fail("could not create %s from %s: %v", name, remote, err)
+			break
+		}
+		s.Branches = append(s.Branches, ghstack.BranchRef{
+			Branch:      name,
+			PullRequest: &ghstack.PullRequest{Number: pr.Number, URL: pr.URL},
+		})
+		env.Out.OK("Pulled %s (%s) from stack #%d on GitHub", output.BranchName(name), pr.String(), s.Number)
+		changed = true
+	}
+	return changed
 }
 
 // prNumbers writes pull request numbers the way GitHub does: #1, #2, #3.

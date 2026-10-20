@@ -688,6 +688,44 @@ func api(args []string) {
 		}
 		fail("no pull request %d", n)
 	}
+	// One stack by number, which stk reads to see what changed on GitHub. The
+	// output is what stk's --jq projection makes of the real payload.
+	if method == "GET" && len(parts) == 5 && parts[3] == "stacks" {
+		n, err := strconv.Atoi(parts[4])
+		if err != nil {
+			fail("bad stack number %q", parts[4])
+		}
+		var base string
+		var prs []int
+		found := false
+		for _, st := range s.Stacks {
+			if st.Number == n {
+				base, prs, found = st.Base, st.PRs, true
+				break
+			}
+		}
+		for _, st := range s.RemoteStacks {
+			if !found && st.Number == n {
+				base, prs, found = st.Base, st.PRs, true
+			}
+		}
+		if !found {
+			fmt.Fprintln(os.Stderr, "gh: Not Found (HTTP 404)")
+			os.Exit(1)
+		}
+		byNumber := map[int]pullRequest{}
+		for _, pr := range s.PRs {
+			byNumber[pr.Number] = pr
+		}
+		var members []map[string]any
+		for _, number := range prs {
+			pr := byNumber[number]
+			members = append(members, map[string]any{"number": pr.Number, "url": pr.URL, "headRefName": pr.Head, "state": pr.State})
+		}
+		out, _ := json.Marshal(map[string]any{"number": n, "base": base, "pullRequests": members})
+		fmt.Println(string(out))
+		return
+	}
 	// The base of a pull request is changed through REST, because gh pr edit
 	// asks for scopes a base change does not need.
 	if method == "PATCH" && len(parts) == 5 && parts[3] == "pulls" {

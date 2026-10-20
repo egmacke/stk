@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/egmacke/stk/compare/v1.11.0...v1.12.0) (2026-10-20)
+
+
+### Features
+
+* keep stk sync and stk restack to the current worktree, with --all-worktrees to opt out ([#41](https://github.com/egmacke/stk/issues/41)) ([4f0a564](https://github.com/egmacke/stk/commit/4f0a56401acdf179a5fe533574bfc047056565bf))
+
 ## [1.11.0](https://github.com/egmacke/stk/compare/v1.10.0...v1.11.0) (2026-10-20)
 
 

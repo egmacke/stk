@@ -94,6 +94,11 @@ type RestackOptions struct {
 	Heading string
 	// DoneMessage is printed when nothing needed changing.
 	DoneMessage string
+	// TrunkTip, when set, is restacked onto in place of the local trunk.
+	TrunkTip string
+	// AllWorktrees rewrites a branch another worktree holds inside that
+	// worktree, instead of leaving it for a restack run from there.
+	AllWorktrees bool
 	// Stash hands over changes the caller has already parked, for operations
 	// such as move that must clear the working tree before they touch
 	// metadata. Restack parks its own when this is nil.
@@ -123,7 +128,7 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 	}
 	if env.DryRun {
 		noteDryRunStash(env)
-		PrintDryRun(env, g, plan)
+		PrintDryRun(env, g, plan, opts.AllWorktrees)
 		return Summary{}, nil
 	}
 	// The journal is checked before anything is parked: refusing to start is
@@ -159,7 +164,10 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 		PrevBases:      map[string]string{},
 		RebaseMerges:   opts.RebaseMerges,
 		DoneMessage:    opts.DoneMessage,
+		TrunkTip:       opts.TrunkTip,
+		AllWorktrees:   opts.AllWorktrees,
 	}
+	op.applyTrunkTip(g)
 	op.AdoptAutostash(stash)
 	if g.Current != nil {
 		op.OriginalBranchID = g.Current.ID
@@ -383,13 +391,22 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 		return OutcomeCurrent, nil
 	}
 
-	// From here the branch must be rewritten. A worktree holding it elsewhere
-	// does not make it untouchable: the rewrite simply happens inside that
-	// worktree, so its index and files move with the ref instead of being left
-	// describing a commit that is no longer the branch. It is the same route
-	// stk sync already takes to fast-forward a trunk checked out elsewhere.
+	// From here the branch must be rewritten. A branch another worktree holds
+	// is that worktree's: stk works in the worktree it is run from, and never
+	// moves files under a checkout the user is not standing in. The branch and
+	// everything above it are left for a restack run from there.
+	//
+	// Asked to work across every worktree, stk rewrites it inside the one that
+	// holds it instead, so its index and files move with the ref rather than
+	// being left describing a commit that is no longer the branch.
 	rebaseIn := ""
 	if b.CheckedOutElsewhere() {
+		if !op.AllWorktrees {
+			blocked[b.ID] = true
+			env.Out.Skip("%s skipped: %s\n  Restack it by running stk restack from that worktree, or stk sync --all-worktrees.",
+				output.BranchName(b.Name), heldElsewhere(b))
+			return OutcomeSkipped, nil
+		}
 		reason, err := worktreeUnavailable(repo, b.Worktree)
 		if err != nil {
 			return "", err
@@ -492,6 +509,11 @@ func restackOne(env *Env, op *Operation, b *stack.Branch, blocked map[string]boo
 	return OutcomeRestacked, nil
 }
 
+// heldElsewhere says where a branch another worktree holds is checked out.
+func heldElsewhere(b *stack.Branch) string {
+	return "checked out in " + b.Worktree
+}
+
 // worktreeUnavailable says why a branch another worktree holds cannot be
 // rewritten there, or "" when it can.
 //
@@ -575,8 +597,8 @@ func resetBranch(env *Env, b *stack.Branch, sha string) error {
 		return repo.R.Mutate("reset", "--hard", "--quiet", sha).Error()
 	}
 	if b.CheckedOutElsewhere() {
-		// Proved clean before the branch was accepted for rewriting, so this
-		// discards nothing there either.
+		// Only reached under --all-worktrees, and proved clean before the
+		// branch was accepted for rewriting, so this discards nothing there.
 		return repo.ResetHardIn(b.Worktree, sha)
 	}
 	return repo.UpdateRef("refs/heads/"+b.Name, sha)
@@ -653,7 +675,7 @@ func restoreOriginal(env *Env, op *Operation) {
 }
 
 // PrintDryRun shows the plan a restack would follow without touching anything.
-func PrintDryRun(env *Env, g *stack.Graph, plan []*stack.Branch) {
+func PrintDryRun(env *Env, g *stack.Graph, plan []*stack.Branch, allWorktrees bool) {
 	p := env.Out
 	willRewrite := map[string]bool{}
 	// Carried exactly as the real run carries it, so the plan says what would
@@ -678,18 +700,23 @@ func PrintDryRun(env *Env, g *stack.Graph, plan []*stack.Branch) {
 		case b.NeedsRestack() || willRewrite[b.Parent.ID]:
 			action = "rebase onto " + b.Parent.Name
 			if b.CheckedOutElsewhere() {
-				// Said plainly, because the rebase would run in a directory
-				// other than the one the user is standing in.
-				reason, err := worktreeUnavailable(env.Repo, b.Worktree)
-				if err != nil || reason != "" {
-					if err != nil {
-						reason = "checked out in " + b.Worktree
+				reason := heldElsewhere(b)
+				if allWorktrees {
+					// Said plainly, because the rebase would run in a
+					// directory other than the one the user is standing in.
+					r, err := worktreeUnavailable(env.Repo, b.Worktree)
+					if err == nil && r == "" {
+						action += " (in " + b.Worktree + ")"
+						willRewrite[b.ID] = true
+						break
 					}
-					blocked[b.ID] = true
-					action = "skipped: " + reason
-					break
+					if err == nil {
+						reason = r
+					}
 				}
-				action += " (in " + b.Worktree + ")"
+				blocked[b.ID] = true
+				action = "skipped: " + reason
+				break
 			}
 			willRewrite[b.ID] = true
 		default:

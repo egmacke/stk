@@ -9,7 +9,7 @@ import (
 )
 
 func newSyncCmd() *cobra.Command {
-	var stackOnly, noRestack, noCleanup, cleanup, noPulls bool
+	var stackOnly, noRestack, noCleanup, cleanup, noPulls, allWorktrees bool
 	var stash autostashPref
 	cmd := &cobra.Command{
 		Use:   "sync",
@@ -23,6 +23,12 @@ func newSyncCmd() *cobra.Command {
 			"are listed with what they would take with them and asked about separately.\n\n" +
 			"Branches left above a deleted one are reparented onto the nearest ancestor\n" +
 			"that survives, and their open pull requests are retargeted to match.\n\n" +
+			"Sync works in the current worktree. A branch checked out in another\n" +
+			"worktree is not restacked, and neither is anything above it; a trunk\n" +
+			"checked out in another worktree is not moved, and the remote trunk is\n" +
+			"restacked onto instead. --all-worktrees does both inside the worktree\n" +
+			"that holds the branch, unless it has uncommitted changes or a git\n" +
+			"operation in progress.\n\n" +
 			"With stk.githubStacks on, sync also settles the stack on GitHub itself:\n" +
 			"it links the pull requests of each stack that runs from trunk to a tip\n" +
 			"without forking, which is how a stack linked outside this checkout — in\n" +
@@ -54,10 +60,11 @@ func newSyncCmd() *cobra.Command {
 			// Without a terminal stk still reports what could be pruned, but
 			// deletes nothing unless --cleanup was given.
 			err = operations.Sync(a.Env, operations.SyncOptions{
-				StackOnly: stackOnly,
-				Restack:   !noRestack,
-				Cleanup:   mode,
-				NoPulls:   noPulls,
+				StackOnly:    stackOnly,
+				Restack:      !noRestack,
+				Cleanup:      mode,
+				NoPulls:      noPulls,
+				AllWorktrees: allWorktrees,
 			})
 			if errors.Is(err, operations.ErrConflict) {
 				return errSilent{err}
@@ -70,6 +77,7 @@ func newSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noCleanup, "no-cleanup", false, "never delete a branch")
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "delete finished branches without prompting")
 	cmd.Flags().BoolVar(&noPulls, "no-pulls", false, "work from git alone; never ask the forge about pull requests")
+	cmd.Flags().BoolVar(&allWorktrees, "all-worktrees", false, "also move trunk and restack branches checked out in other worktrees")
 	stash.register(cmd)
 	return cmd
 }

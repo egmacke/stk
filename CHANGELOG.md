@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/egmacke/stk/compare/v1.10.0...v1.11.0) (2026-10-20)
+
+
+### Features
+
+* pull changes made to linked stacks on GitHub into stk sync ([#39](https://github.com/egmacke/stk/issues/39)) ([36d6a23](https://github.com/egmacke/stk/commit/36d6a23378358a1f238db8780e6198c5c09838f7))
+
 ## [1.10.0](https://github.com/egmacke/stk/compare/v1.9.1...v1.10.0) (2026-10-19)
 
 

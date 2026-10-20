@@ -59,6 +59,9 @@ type Operation struct {
 	// branches on trunk are restacked onto. stk sync sets it to the remote
 	// trunk when it leaves a trunk checked out in another worktree alone.
 	TrunkTip string `json:"trunkTip,omitempty"`
+	// AllWorktrees lets the operation rewrite branches other worktrees hold,
+	// inside those worktrees. It is set by stk sync --all-worktrees.
+	AllWorktrees bool `json:"allWorktrees,omitempty"`
 	// Cleanup carries sync work that must still happen after the restack
 	// portion of a sync operation finishes.
 	SyncRestackRemaining bool `json:"syncRestackRemaining,omitempty"`

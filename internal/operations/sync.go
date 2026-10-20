@@ -31,6 +31,10 @@ type SyncOptions struct {
 	Cleanup   CleanupMode
 	// NoPulls skips the forge entirely, so cleanup works from git alone.
 	NoPulls bool
+	// AllWorktrees lets the sync move trunk and restack branches checked out
+	// in other worktrees, inside those worktrees. By default it works in the
+	// current worktree only.
+	AllWorktrees bool
 }
 
 // Sync fetches the remote, fast-forwards trunk where that is provably safe,
@@ -83,7 +87,7 @@ func Sync(env *Env, opts SyncOptions) error {
 		env.Out.Warnf("Remote %q is not configured; skipping fetch.", cfg.Remote)
 	}
 
-	trunkSHA, trunkHeld, err := updateTrunk(env)
+	trunkSHA, trunkHeld, err := updateTrunk(env, opts.AllWorktrees)
 	if err != nil {
 		return err
 	}
@@ -176,11 +180,12 @@ func Sync(env *Env, opts SyncOptions) error {
 	}
 	handedOver = true
 	_, err = Restack(env, g, target, RestackOptions{
-		Scope:       scope,
-		Heading:     "Restacking...",
-		DoneMessage: "All stacks are up to date.",
-		Stash:       stash,
-		TrunkTip:    trunkTip(trunkHeld, trunkSHA),
+		Scope:        scope,
+		Heading:      "Restacking...",
+		DoneMessage:  "All stacks are up to date.",
+		Stash:        stash,
+		TrunkTip:     trunkTip(trunkHeld, trunkSHA),
+		AllWorktrees: opts.AllWorktrees,
 	})
 	return err
 }
@@ -244,8 +249,9 @@ func trunkTip(held bool, sha string) string {
 // touch a trunk that has diverged from the remote. A trunk checked out in
 // another worktree is that worktree's, so it is left where it is: held is
 // then true, and the commit returned is the remote trunk, for the sync to
-// work from instead.
-func updateTrunk(env *Env) (sha string, held bool, err error) {
+// work from instead. With allWorktrees it is fast-forwarded inside the
+// worktree that holds it.
+func updateTrunk(env *Env, allWorktrees bool) (sha string, held bool, err error) {
 	repo := env.Repo
 	trunk := env.Cfg.Trunk
 	if env.Cfg.Remote == "" {
@@ -285,8 +291,8 @@ func updateTrunk(env *Env) (sha string, held bool, err error) {
 	}
 	holder := worktrees[trunk]
 	switch {
-	case holder != "" && filepath.Clean(holder) != filepath.Clean(repo.Root):
-		env.Out.Skip("%s not moved: checked out in %s; working from %s/%s instead",
+	case holder != "" && !allWorktrees && filepath.Clean(holder) != filepath.Clean(repo.Root):
+		env.Out.Skip("%s not moved: checked out in %s; working from %s/%s instead (--all-worktrees moves it)",
 			output.BranchName(trunk), holder, env.Cfg.Remote, trunk)
 		return remoteSHA, true, nil
 	case holder == "":
@@ -295,8 +301,8 @@ func updateTrunk(env *Env) (sha string, held bool, err error) {
 			return "", false, err
 		}
 	default:
-		// Checked out here, so the update goes through this worktree and its
-		// index and files move with the ref.
+		// Updated through the worktree that holds it — this one, or under
+		// --all-worktrees another — so its index and files move with the ref.
 		wt := repo.R.WithDir(holder)
 		status := wt.Run("status", "--porcelain", "--untracked-files=no")
 		if !status.OK() {

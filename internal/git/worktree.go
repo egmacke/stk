@@ -105,6 +105,21 @@ func (repo *Repo) WorktreeClean(dir string) (bool, error) {
 	return strings.TrimSpace(res.Stdout) == "", nil
 }
 
+// WorktreeBusy reports whether the worktree at dir is part-way through a git
+// operation of its own: a rebase, a merge, a cherry-pick, a revert or a
+// bisect. stk never rewrites a branch out from under one of those.
+func (repo *Repo) WorktreeBusy(dir string) bool {
+	if repo.RebaseInProgressIn(dir) {
+		return true
+	}
+	for _, name := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"} {
+		if repo.gitPathExists(dir, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // AbortRebaseIn ends a rebase paused in another worktree, putting its branch,
 // index and files back where they were.
 func (repo *Repo) AbortRebaseIn(dir string) error {

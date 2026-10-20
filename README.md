@@ -280,7 +280,7 @@ Restacking the stack containing sc-123/api...
 
 ✓ sc-123/api
 ⊘ sc-123/service skipped: checked out in /home/you/work/wt-service
-  Restack it by running stk restack from that worktree.
+  Restack it by running stk restack from that worktree, or stk sync --all-worktrees.
 ⊘ sc-123/ui blocked: sc-123/service could not be processed
 
 1 restacked, 1 skipped, 1 blocked.
@@ -296,11 +296,43 @@ trunk is left where it is. The sync then works from the remote trunk it just
 fetched, so the stacks still land on fresh trunk:
 
 ```text
-⊘ main not moved: checked out in /home/you/work/repo; working from origin/main instead
+⊘ main not moved: checked out in /home/you/work/repo; working from origin/main instead (--all-worktrees moves it)
 ```
 
 That worktree brings its own trunk up to date with `git pull`, or with
 `stk sync` run from there.
+
+#### `stk sync --all-worktrees`
+
+To settle every worktree from one place, pass `--all-worktrees`. Trunk is then
+fast-forwarded inside the worktree that holds it, and a held branch is rebased
+inside its worktree, so that worktree's index and files move with the ref.
+`stk` says where the work happened:
+
+```console
+$ stk sync --all-worktrees
+...
+✓ sc-123/api
+✓ sc-123/service in /home/you/work/wt-service
+✓ sc-123/ui
+```
+
+Even then, two things leave a held branch exactly where it was:
+
+- **Uncommitted changes there.** A working tree you are not standing in is not
+  `stk`'s to disturb, so the branch is skipped and everything above it is
+  reported blocked. The same goes for a worktree part-way through a rebase,
+  merge, cherry-pick, revert or bisect. A trunk with uncommitted changes there
+  is not moved either.
+- **A conflict.** `stk continue` and `stk abort` belong to one worktree, and a
+  rebase left paused in another would wedge a checkout you never pointed `stk`
+  at. So the rebase is undone there and the branch reported, for you to
+  resolve where it belongs:
+
+```text
+⊘ sc-123/service blocked: conflict while rebasing in /home/you/work/wt-service
+  Resolve it by running stk restack from that worktree.
+```
 
 Deleting follows this rule too: `stk sync`, `stk delete` and `stk fold` refuse
 a branch another worktree holds, because removing it would leave that worktree
@@ -1274,8 +1306,10 @@ commits belong to the branch.
 - deletes a branch with no such proof only where you named it — `stk delete`,
   `stk triage`, or the separate `stk sync` list that defaults to *no* — and
   prints the one command that brings it back;
-- never deletes or rewrites a branch checked out in another worktree, trunk
-  included: that is for `stk` run from the worktree that holds it;
+- never deletes a branch checked out in another worktree, and rewrites one,
+  trunk included, only under `stk sync --all-worktrees`, inside the worktree
+  that holds it, and never while that worktree has uncommitted changes or a
+  git operation of its own in flight;
 - never loses your uncommitted changes: it parks them, puts them back, and
   leaves them in the stash list if they will not reapply (`--no-autostash` to
   refuse the operation instead);

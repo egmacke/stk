@@ -85,7 +85,7 @@ func TestRestackLeavesBranchHeldByAnotherWorktree(t *testing.T) {
 	// that worktree's, and what sits above it waits on it.
 	out := r.stk("restack")
 	requireContains(t, out, "service skipped: checked out in "+wt)
-	requireContains(t, out, "Restack it by running stk restack from that worktree.")
+	requireContains(t, out, "Restack it by running stk restack from that worktree, or stk sync --all-worktrees.")
 	requireContains(t, out, "ui blocked")
 	requireEqual(t, r.sha("service"), serviceTip, "service untouched")
 	requireEqual(t, r.sha("ui"), uiTip, "ui untouched")
@@ -183,6 +183,101 @@ func TestSyncContinuesOntoTheRemoteTrunkAfterAConflict(t *testing.T) {
 	requireEqual(t, r.baseOf("api"), r.sha("origin/main"), "base after continue")
 }
 
+func TestSyncAllWorktreesSkipsBranchHeldByADirtyWorktree(t *testing.T) {
+	r := newRepo(t)
+	buildStack(r, "api", "service", "ui")
+	wt := r.addWorktree("wt-service", "service")
+	if err := os.WriteFile(filepath.Join(wt, "service.txt"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r.stk("checkout", "api")
+	r.amend("api.txt", "api amended\n", "api amended")
+	serviceTip := r.sha("service")
+	uiTip := r.sha("ui")
+
+	out := r.stk("--no-interactive", "sync", "--no-cleanup", "--all-worktrees")
+	requireContains(t, out, "skipped: checked out with uncommitted changes in "+wt)
+	// A child of a skipped parent must not be rebased against uncertain state.
+	requireContains(t, out, "ui blocked")
+	requireEqual(t, r.sha("service"), serviceTip, "service untouched")
+	requireEqual(t, r.sha("ui"), uiTip, "ui untouched")
+	requireEqual(t, strings.TrimSpace(r.gitAt(wt, "status", "--porcelain")), "M service.txt", "changes left alone")
+}
+
+func TestSyncAllWorktreesUndoesAConflictingRebaseInAnotherWorktree(t *testing.T) {
+	r := newRepo(t)
+	conflictingStack(r)
+	wt := r.addWorktree("wt-b", "b")
+
+	r.stk("checkout", "a")
+	r.amend("shared.txt", "a rewritten\n", "a rewritten")
+	bTip := r.sha("b")
+	cTip := r.sha("c")
+
+	out := r.stk("--no-interactive", "sync", "--no-cleanup", "--all-worktrees")
+	requireContains(t, out, "b blocked: conflict while rebasing in "+wt)
+	requireContains(t, out, "Resolve it by running stk restack from that worktree.")
+	requireContains(t, out, "c blocked")
+	requireEqual(t, r.sha("b"), bTip, "b left where it was")
+	requireEqual(t, r.sha("c"), cTip, "c left where it was")
+	// The other worktree is not left mid-rebase, and no journal survives here.
+	requireEqual(t, r.gitAt(wt, "status", "--porcelain"), "", "linked worktree left mid-rebase")
+	requireEqual(t, r.gitAt(wt, "symbolic-ref", "--short", "HEAD"), "b", "still on b")
+	requireEqual(t, r.stkAt(r.Root, "", "--no-interactive", "sync", "--no-cleanup", "--all-worktrees").Code, 0, "sync again")
+
+	// The conflict is still there to resolve, in the worktree that owns it.
+	res := r.stkAt(wt, "", "restack")
+	requireEqual(t, res.Code, 1, "restack from the owning worktree")
+	requireContains(t, res.All(), "Conflict encountered")
+	r.stkAt(wt, "", "abort")
+}
+
+func TestSyncAllWorktreesRestacksThroughAnotherWorktree(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stk("checkout", "api")
+	wt := r.addWorktree("wt-service", "service")
+
+	// Advance the remote trunk, so the whole stack needs replaying.
+	upstream := filepath.Join(filepath.Dir(r.Root), "upstream")
+	r.runIn(filepath.Dir(r.Root), "", "git", "clone", "-q", r.Origin, upstream)
+	r.runIn(upstream, "", "git", "commit", "-q", "--allow-empty", "-m", "remote work")
+	r.runIn(upstream, "", "git", "push", "-q", "origin", "main")
+
+	serviceTip := r.sha("service")
+	out := r.stk("--no-interactive", "sync", "--no-cleanup", "--all-worktrees")
+	requireContains(t, out, wt)
+	if r.sha("service") == serviceTip {
+		t.Fatal("service was not restacked through its own worktree")
+	}
+	requireEqual(t, r.gitAt(wt, "rev-parse", "HEAD"), r.sha("service"), "linked worktree moved with the ref")
+	if status := r.gitAt(wt, "status", "--porcelain"); status != "" {
+		t.Fatalf("linked worktree left dirty:\n%s", status)
+	}
+}
+
+func TestSyncAllWorktreesFastForwardsTrunkInAnotherWorktree(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api")
+
+	// main lives in a linked worktree; the current one is on api.
+	wt := r.addWorktree("wt-main", "main")
+
+	// Advance the remote trunk.
+	upstream := filepath.Join(filepath.Dir(r.Root), "upstream")
+	r.runIn(filepath.Dir(r.Root), "", "git", "clone", "-q", r.Origin, upstream)
+	r.runIn(upstream, "", "git", "commit", "-q", "--allow-empty", "-m", "remote work")
+	r.runIn(upstream, "", "git", "push", "-q", "origin", "main")
+
+	out := r.stk("--no-interactive", "sync", "--no-cleanup", "--all-worktrees")
+	requireContains(t, out, "fast-forwarded by 1 commit")
+	requireEqual(t, r.gitAt(wt, "rev-parse", "HEAD"), r.sha("origin/main"), "linked worktree moved with the ref")
+	if status := r.gitAt(wt, "status", "--porcelain"); status != "" {
+		t.Fatalf("linked worktree left dirty:\n%s", status)
+	}
+}
+
 func TestOnlyTheOwningWorktreeMayContinueOrAbort(t *testing.T) {
 	r := newRepo(t)
 	conflictingStack(r)
@@ -257,4 +352,18 @@ func TestTrackOntoTrunkUsesTheFresherRemoteTrunk(t *testing.T) {
 	r.stkAt(wt, "", "track", "api", "--parent", "main")
 
 	requireEqual(t, r.baseOf("api"), fresh, "base is where api left origin/main")
+}
+
+func TestSyncDryRunPlansWorktreesByFlag(t *testing.T) {
+	r := newRepoWithRemote(t)
+	buildStack(r, "api", "service")
+	r.stk("checkout", "api")
+	wt := r.addWorktree("wt-service", "service")
+	r.amend("api.txt", "api amended\n", "api amended")
+
+	out := r.stk("--no-interactive", "sync", "--no-cleanup", "--dry-run")
+	requireContains(t, out, "skipped: checked out in "+wt)
+
+	out = r.stk("--no-interactive", "sync", "--no-cleanup", "--dry-run", "--all-worktrees")
+	requireContains(t, out, "rebase onto api (in "+wt+")")
 }

@@ -41,7 +41,8 @@ type SyncOptions struct {
 // just removed, which would otherwise show somebody else's commits, and, where
 // the repository has opted into GitHub stacks, the link between the pull
 // requests of a stack, which is how a stack linked outside this checkout is
-// found at all.
+// found at all. A stack already linked there is read back first, so branches
+// added to it elsewhere are pulled in and tracked.
 func Sync(env *Env, opts SyncOptions) error {
 	repo := env.Repo
 	cfg := env.Cfg
@@ -94,6 +95,19 @@ func Sync(env *Env, opts SyncOptions) error {
 		trunkSHA = g.Trunk.SHA
 	}
 	if repairTrunkBases(env, g) > 0 && !env.DryRun {
+		if g, err = stack.Load(repo, cfg); err != nil {
+			return err
+		}
+	}
+
+	// What has changed in the stacks on GitHub since this checkout last
+	// looked — merges, and branches added on top there — comes in before
+	// cleanup, so a branch pulled above one that has landed is reparented with
+	// the rest, and before the restack, so it is restacked with them.
+	if !opts.NoPulls && pullGitHubStacks(env) {
+		if _, err := syncGHStack(env, ghSyncOptions{}); err != nil {
+			return err
+		}
 		if g, err = stack.Load(repo, cfg); err != nil {
 			return err
 		}

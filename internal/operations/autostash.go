@@ -1,6 +1,7 @@
 package operations
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/egmacke/stk/internal/git"
@@ -196,6 +197,66 @@ func Switch(env *Env, name string) error {
 	return fmt.Errorf("your uncommitted changes conflict with %s\n\n"+
 		"Nothing was switched. Commit or stash them, or resolve the overlap, then\n"+
 		"check %s out", name, name)
+}
+
+// reapplyAfterSync puts back the changes stk sync parked, or, when they will
+// not go back cleanly, undoes what the sync did to the branch they were taken
+// from and puts them back there instead, unchanged.
+//
+// A sync is not where the user expects to resolve their own changes against
+// rewritten branches, and conflict markers left by one are easy to commit by
+// mistake. So the restack is rolled back through op, which is nil when there
+// was none, and trunk is moved back to trunkBefore when the sync
+// fast-forwarded it here. The changes are never at risk: they stay held by
+// their ref until they are back, and any step that fails hands them to the
+// stash list instead.
+//
+// The error it returns on an undo says what happened and what to run next.
+func reapplyAfterSync(env *Env, a *Autostash, op *Operation, trunkBefore string) error {
+	if a == nil || a.SHA == "" {
+		return nil
+	}
+	repo := env.Repo
+	if res := a.tryApply(env); res.OK() {
+		if err := a.Drop(env); err != nil {
+			env.Out.Warnf("%s could not remove %s: %v", git.ShortSHA(a.SHA), a.Ref, err)
+			return nil
+		}
+		env.Out.OK("Restored stashed changes")
+		return nil
+	}
+	if err := repo.ResetHard(); err != nil {
+		a.Keep(env, "did not reapply cleanly, and the working tree could not be cleared")
+		return err
+	}
+	if op != nil {
+		if _, err := rollBack(env, op); err != nil {
+			a.Keep(env, "did not reapply cleanly, and the restack could not be undone")
+			return err
+		}
+	}
+	trunk := env.Cfg.Trunk
+	if trunkBefore != "" && repo.CurrentBranch() == trunk {
+		if err := repo.ResetHardIn(repo.Root, trunkBefore); err != nil {
+			a.Keep(env, "did not reapply cleanly, and "+trunk+" could not be moved back")
+			return err
+		}
+	}
+	if !putBack(env, a) {
+		return errors.New("your uncommitted changes conflict with the synced branches, and stk could not put them back")
+	}
+	env.Out.OK("Restored stashed changes, as they were")
+	if trunkBefore != "" {
+		return fmt.Errorf("your uncommitted changes conflict with the commits the sync brought into %s\n\n"+
+			"Nothing was moved: %s and every branch are back where they were, and your\n"+
+			"changes are back in the working tree as they were.\n\n"+
+			"Commit or stash them, then run stk sync again", trunk, trunk)
+	}
+	return errors.New("your uncommitted changes conflict with the restacked branches\n\n" +
+		"The restack was undone: every branch is back where it was, and your changes\n" +
+		"are back in the working tree as they were. The rest of the sync is done.\n\n" +
+		"Run stk restack to restack with your changes. It stops where they conflict,\n" +
+		"so you can resolve them and run stk continue")
 }
 
 // putBack restores a stash onto the branch it was taken from, where it applies

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/egmacke/stk/internal/git"
 	"github.com/egmacke/stk/internal/output"
 	"github.com/egmacke/stk/internal/stack"
 )
@@ -30,6 +31,12 @@ func Continue(env *Env) error {
 	if !op.OwnedByThisWorktree(repo) {
 		return notOwnerError(op, repo.Root)
 	}
+	if op.Phase == PhaseAutostash {
+		return finishAutostash(env, op)
+	}
+	// The user has resolved a conflict of the restack's own, and an undo
+	// would throw that work away.
+	op.UndoOnStashConflict = false
 
 	if repo.RebaseInProgress() {
 		res := repo.R.Interactive("rebase", "--continue")
@@ -93,6 +100,31 @@ func restoreBranch(env *Env, name, sha, holder string) error {
 	return repo.ResetHardIn(holder, sha)
 }
 
+// finishAutostash completes an operation that was waiting only on the user to
+// resolve the parked changes it put back.
+func finishAutostash(env *Env, op *Operation) error {
+	repo := env.Repo
+	if repo.HasUnmergedPaths() {
+		env.Out.Warnf("")
+		env.Out.Warnf("Your uncommitted changes still have unresolved conflicts.")
+		env.Out.Warnf("")
+		env.Out.Warnf("Resolve them, mark each file resolved with git add, and run stk continue")
+		env.Out.Warnf("again, or undo the whole restack with stk abort.")
+		return ErrConflict
+	}
+	a := op.Autostash()
+	if err := op.Clear(repo); err != nil {
+		return err
+	}
+	if a != nil {
+		if err := a.Drop(env); err != nil {
+			env.Out.Warnf("%s could not remove %s: %v", git.ShortSHA(a.SHA), a.Ref, err)
+		}
+	}
+	env.Out.OK("Restored stashed changes")
+	return nil
+}
+
 // Abort undoes the whole stk operation, not merely the rebase that is
 // currently in flight.
 func Abort(env *Env) error {
@@ -107,10 +139,32 @@ func Abort(env *Env) error {
 	if !op.OwnedByThisWorktree(repo) {
 		return notOwnerError(op, repo.Root)
 	}
+	if op.Phase == PhaseAutostash {
+		// The half-resolved changes go; the parked ones, still held by
+		// their ref, come back below onto the branches as they were.
+		if err := repo.ResetHard(); err != nil {
+			return err
+		}
+	}
+	restored, err := rollBack(env, op)
+	if err != nil {
+		return err
+	}
+	env.Out.OK("Aborted stk %s; %d branch(es) restored.", op.Type, restored)
+	// The branches are back where they were, so the changes parked when the
+	// operation started belong in the working tree again.
+	op.Autostash().Restore(env)
+	return nil
+}
 
+// rollBack puts every branch the operation touched back where it was, returns
+// the user to the branch they started on, and clears the journal. It reports
+// how many branches it restored, and leaves the parked changes to the caller.
+func rollBack(env *Env, op *Operation) (int, error) {
+	repo := env.Repo
 	if repo.RebaseInProgress() {
 		if res := repo.R.Interactive("rebase", "--abort"); !res.OK() {
-			return res.Error()
+			return 0, res.Error()
 		}
 	}
 
@@ -118,7 +172,7 @@ func Abort(env *Env) error {
 	// final switch then performs a real checkout of the restored branch.
 	if head := repo.CurrentBranch(); head != "" {
 		if err := repo.SwitchDetach("HEAD"); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -130,7 +184,7 @@ func Abort(env *Env) error {
 	// worktree other than this one.
 	holders, err := repo.BranchWorktrees()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	restored := 0
 	for id, sha := range op.Snapshots {
@@ -139,34 +193,30 @@ func Abort(env *Env) error {
 			continue
 		}
 		if err := restoreBranch(env, name, sha, holders[name]); err != nil {
-			return err
+			return restored, err
 		}
 		restored++
 	}
 	for id, base := range op.PrevBases {
 		if base == "" {
 			if err := stack.ClearBase(repo, id); err != nil {
-				return err
+				return restored, err
 			}
 			continue
 		}
 		if err := stack.SetBase(repo, id, base); err != nil {
-			return err
+			return restored, err
 		}
 	}
 
 	if op.OriginalBranch != "" && repo.BranchExists(op.OriginalBranch) {
 		if err := repo.Switch(op.OriginalBranch); err != nil {
-			return err
+			return restored, err
 		}
 	}
 	if err := op.Clear(repo); err != nil {
-		return err
+		return restored, err
 	}
 	mirrorGHStack(env, ghSyncOptions{})
-	env.Out.OK("Aborted stk %s; %d branch(es) restored.", op.Type, restored)
-	// The branches are back where they were, so the changes parked when the
-	// operation started belong in the working tree again.
-	op.Autostash().Restore(env)
-	return nil
+	return restored, nil
 }

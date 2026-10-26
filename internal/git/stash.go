@@ -1,6 +1,9 @@
 package git
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // StashCreate builds a stash commit from the index and the working tree
 // without touching either, and returns its object id. It returns "" when
@@ -45,3 +48,11 @@ func (repo *Repo) ResetHard() error {
 
 // StashListRef names an entry of the stash reflog.
 func StashListRef(n int) string { return fmt.Sprintf("stash@{%d}", n) }
+
+// HasUnmergedPaths reports whether the index still holds a conflict, as a
+// stash apply that did not go cleanly leaves one until each file is resolved
+// and added.
+func (repo *Repo) HasUnmergedPaths() bool {
+	res := repo.R.Run("diff", "--name-only", "--diff-filter=U")
+	return res.OK() && strings.TrimSpace(res.Stdout) != ""
+}

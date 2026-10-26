@@ -48,7 +48,12 @@ type SyncOptions struct {
 // requests of a stack, which is how a stack linked outside this checkout is
 // found at all. A stack already linked there is read back first, so branches
 // added to it elsewhere are pulled in and tracked.
-func Sync(env *Env, opts SyncOptions) error {
+//
+// Uncommitted changes are parked for the whole run and put back at the end.
+// Where they would conflict with what the sync did to the branch they came
+// from, the sync undoes that instead and puts them back unchanged: they are
+// never left half-applied, and never lost.
+func Sync(env *Env, opts SyncOptions) (err error) {
 	repo := env.Repo
 	cfg := env.Cfg
 
@@ -61,11 +66,20 @@ func Sync(env *Env, opts SyncOptions) error {
 	if err != nil {
 		return err
 	}
+	// Where trunk stood, when it is checked out here: fast-forwarding it moves
+	// the files the parked changes go back onto.
+	trunkBefore := ""
+	if stash != nil && repo.CurrentBranch() == cfg.Trunk {
+		trunkBefore, _ = repo.RevParse("refs/heads/" + cfg.Trunk)
+	}
 	// Until the restack takes over, the stash is this function's to put back.
 	handedOver := false
 	defer func() {
-		if !handedOver {
-			stash.Restore(env)
+		if handedOver {
+			return
+		}
+		if undoErr := reapplyAfterSync(env, stash, nil, trunkBefore); err == nil {
+			err = undoErr
 		}
 	}()
 	if opts.Restack {
@@ -186,6 +200,9 @@ func Sync(env *Env, opts SyncOptions) error {
 		Stash:        stash,
 		TrunkTip:     trunkTip(trunkHeld, trunkSHA),
 		AllWorktrees: opts.AllWorktrees,
+
+		UndoOnStashConflict: true,
+		TrunkBefore:         trunkBefore,
 	})
 	return err
 }

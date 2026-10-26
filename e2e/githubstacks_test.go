@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -345,7 +347,9 @@ func TestSyncPicksUpAMergeOnGitHub(t *testing.T) {
 	requireContains(t, out, "Removed api")
 	requireEqual(t, r.branchExists("api"), false, "landed branch removed")
 	requireEqual(t, r.parentOf("service"), "main", "reparented onto trunk")
-	requireEqual(t, r.ghStackChains()[0], "main: service ui", "gh stack tracking")
+	// Kept in gh stack's tracking as gh stack keeps it: landed, at the bottom.
+	requireEqual(t, r.ghStackChains()[0], "main: api service ui", "gh stack tracking")
+	requireEqual(t, r.ghStack().Stacks[0].Branches[0].PullRequest.Merged, true, "api recorded as merged")
 	// Still the same stack on GitHub.
 	requireEqual(t, r.ghStackNumbers()[0], 1, "stack number kept")
 }
@@ -448,21 +452,85 @@ func TestSubmitRelinksAStackWhoseBottomMergedOnGitHub(t *testing.T) {
 	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), "1 2 3", "the landed pull request kept")
 }
 
-func TestSyncRelinksAStackLinkedElsewhereWhoseBottomMerged(t *testing.T) {
+func TestSyncKeepsALandedBranchInTheStack(t *testing.T) {
 	r := githubStacksRepo(t, "api", "service", "ui")
-	r.stk("ss", "-pn", "--no-link")
-	// Linked on GitHub itself, so this checkout has no number to look it up by.
-	r.linkOnGitHub(7, "main", 1, 2, 3)
+	r.stk("ss", "-pn")
 	r.mergePullRequest(1)
+	r.stk("sync", "--cleanup")
 
-	out := r.stk("sync", "--no-restack", "--cleanup")
+	// Later runs leave the landed branch where gh stack keeps it, and do not
+	// try to track it again.
+	out := r.stk("sync", "--cleanup")
 	requireNotContains(t, out, "Stacks on GitHub not updated")
-	requireContains(t, out, "#2, #3 are a stack on GitHub")
+	requireNotContains(t, out, "left alone")
+	requireNotContains(t, out, "Tracking api")
+	out = r.stk("restack")
+	requireNotContains(t, out, "left alone")
+	requireEqual(t, r.ghStackChains()[0], "main: api service ui", "gh stack tracking")
+	requireEqual(t, r.tracked("api"), false, "api not tracked again")
+	out = r.stk("doctor")
+	requireNotContains(t, out, "tracked only by gh stack")
+}
+
+func TestSubmitLinksAroundABranchThatMergedBeforeAnySync(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service", "ui")
+	r.stk("ss", "-pn")
+	r.mergePullRequest(1)
+	r.truncateGHCallLog()
+
+	// api is still here, and no sync has looked at it, but it is no gap.
+	r.stk("checkout", "ui")
+	out := r.stk("ss", "-u")
+	requireNotContains(t, out, "stops below it")
+	requireContains(t, out, "Linked #2, #3 as a stack on GitHub")
+	requireContains(t, r.ghCallLog(), "stack link --base main --remote origin 1 2 3")
+}
+
+func TestSubmitRelinksAStackWhoseTrackingLostTheLandedBranch(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service", "ui")
+	r.stk("ss", "-pn")
+	r.mergePullRequest(1)
+	r.stk("sync", "--no-restack", "--cleanup")
+	// As an older stk left it: the landed branch gone from the tracking.
+	r.dropFromGHStack("api")
+	r.truncateGHCallLog()
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Linked #2, #3 as a stack on GitHub")
 	calls := r.ghCallLog()
 	requireContains(t, calls, "stack link --base main --remote origin 2 3")
 	requireContains(t, calls, "stack link --base main --remote origin 1 2 3")
 	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), "1 2 3", "the landed pull request kept")
-	requireEqual(t, r.ghStackNumbers()[0], 7, "the stack on GitHub is now recorded here")
+}
+
+// dropFromGHStack removes a branch from gh stack's tracking file.
+func (r *repo) dropFromGHStack(branch string) {
+	r.t.Helper()
+	data, err := os.ReadFile(r.ghStackPath())
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	var f map[string]any
+	if err := json.Unmarshal(data, &f); err != nil {
+		r.t.Fatal(err)
+	}
+	stacks, _ := f["stacks"].([]any)
+	for _, item := range stacks {
+		st, _ := item.(map[string]any)
+		branches, _ := st["branches"].([]any)
+		var kept []any
+		for _, b := range branches {
+			if m, _ := b.(map[string]any); m["branch"] != branch {
+				kept = append(kept, b)
+			}
+		}
+		st["branches"] = kept
+	}
+	out, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	r.writeGHStack(string(out))
 }
 
 func TestSubmitDoesNotRelinkOverAPullRequestRemovedOnGitHub(t *testing.T) {

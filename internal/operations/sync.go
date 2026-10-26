@@ -485,6 +485,7 @@ func cleanup(env *Env, g *stack.Graph, trunkSHA string, opts SyncOptions) error 
 		return err
 	}
 	sort.Slice(doomed, func(i, j int) bool { return doomed[i].Name < doomed[j].Name })
+	recordLanded(env, doomed, prs)
 	for _, b := range doomed {
 		if err := dropBranch(env, b); err != nil {
 			return err

@@ -650,6 +650,13 @@ With that set, `stk` and `gh stack` describe one stack, kept in step by `stk`:
   GitHub about them and marks the merged ones. The pull requests of a stack
   are linked as a GitHub stack through `gh stack link`, and no stack comment
   is written — GitHub shows the stack on each pull request already.
+- **Merged pull requests stay in the stack.** GitHub keeps a merged pull
+  request in its stack, and `gh stack link` refuses to take one out. So when
+  cleanup removes a landed branch, `gh stack`'s tracking keeps it at the
+  bottom of the stack, marked merged, as `gh stack` itself does. `stk`'s
+  working stack no longer includes it: it is not tracked again, not
+  restacked, and not counted as a gap. Each link names the merged pull
+  requests again in their places.
 - **A stack on GitHub can be brought in whole.** `stk track --from-pr <n>`
   runs `gh stack checkout` for a pull request number, URL or stack number:
   the branches are fetched and checked out, and `stk` tracks each with the

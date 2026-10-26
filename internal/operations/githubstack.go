@@ -113,22 +113,57 @@ func linkGitHubStack(env *Env, gh *forge.GH, target *stack.Branch, prs *pullRequ
 // above it onto the branch below, which changes what its reviewer is looking
 // at. A stack of one pull request is not linked, as it is not commented on.
 //
+// A branch whose pull request has merged is no gap. GitHub's stack keeps it,
+// and gh stack link refuses a link that would take it out, so the landed pull
+// requests gh stack's tracking holds go into the link in their places, whether
+// the branch is still in the graph or cleanup has removed it. Only the open
+// ones count towards the two, and only they are announced: the landed ones are
+// already in the stack, and are there only so the link leaves them be.
+//
 // done says how the result is announced. stk submit has just built the stack
 // and says it linked it; stk sync is reconciling one that may well have been
 // linked already, and says only what is true either way.
 func linkPullRequestChain(env *Env, gh *forge.GH, chain []*stack.Branch, prs *pullRequestCache, done string) (bool, error) {
-	var numbers []int
-	var gap *stack.Branch
-	for i, b := range chain {
-		pr, err := prs.open(gh, b.Name)
-		if err != nil {
-			return false, err
+	f, err := ghstack.Load(env.Repo.CommonDir)
+	if err != nil {
+		// A file stk cannot read is stk doctor's to report.
+		f = &ghstack.File{}
+	}
+	landed := landedPullRequests(f)
+
+	var numbers, open []int
+	seen := map[int]bool{}
+	add := func(list ...int) {
+		for _, n := range list {
+			if !seen[n] {
+				seen[n] = true
+				numbers = append(numbers, n)
+			}
 		}
-		if pr != nil {
-			numbers = append(numbers, pr.Number)
+	}
+	for i, b := range chain {
+		n, ok := landed.merged[b.Name]
+		if !ok {
+			pr, err := prs.open(gh, b.Name)
+			if err != nil {
+				return false, err
+			}
+			if pr != nil {
+				add(landed.below[b.Name]...)
+				add(pr.Number)
+				add(landed.above[b.Name]...)
+				open = append(open, pr.Number)
+				continue
+			}
+			n, ok = mergedSinceRecorded(gh, f, b.Name)
+		}
+		if ok {
+			add(landed.below[b.Name]...)
+			add(n)
+			add(landed.above[b.Name]...)
 			continue
 		}
-		gap = b
+		gap := b
 		// Only worth mentioning when something above the gap is left out.
 		for _, above := range chain[i+1:] {
 			pr, err := prs.open(gh, above.Name)
@@ -142,18 +177,18 @@ func linkPullRequestChain(env *Env, gh *forge.GH, chain []*stack.Branch, prs *pu
 		}
 		break
 	}
-	if len(numbers) < 2 {
+	if len(open) < 2 {
 		return false, nil
 	}
 
-	list := prNumbers(numbers)
+	list := prNumbers(open)
 	if env.DryRun {
 		env.Out.Dry("would link %s as a stack on GitHub", list)
 		return true, nil
 	}
-	err := gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, append(landedPullRequests(env, gh, chain, numbers), numbers...))
-	if landed := refusedLanded(gh, err, numbers); landed != nil {
-		err = gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, append(landed, numbers...))
+	err = gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, numbers)
+	if refused := refusedLanded(gh, err, numbers); refused != nil {
+		err = gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, append(refused, numbers...))
 	}
 	if err != nil {
 		var ce *forge.CommandError
@@ -170,43 +205,49 @@ func linkPullRequestChain(env *Env, gh *forge.GH, chain []*stack.Branch, prs *pu
 	return true, nil
 }
 
-// landedPullRequests returns the merged pull requests of the stack on GitHub
-// the chain is already linked as, bottom first, leaving out any the link names
-// itself.
-//
-// gh stack link refuses a link that would take a pull request out of a stack,
-// and a merged one is no exception, but stk drops a landed branch from its
-// graph and so from the chain. Once the bottom of a stack has merged on GitHub,
-// relinking what is left needs the landed pull requests named again beneath
-// it. A pull request that left the stack any other way is not added back:
-// that is a real difference, and gh stack's refusal says so.
-//
-// Nothing here is fatal: a stack stk cannot read is linked as before, and gh
-// stack link has the last word.
-func landedPullRequests(env *Env, gh *forge.GH, chain []*stack.Branch, numbers []int) []int {
-	f, err := ghstack.Load(env.Repo.CommonDir)
-	if err != nil {
-		return nil
-	}
-	s, _ := f.Find(chain[0].Name)
-	if s == nil || s.Number == 0 {
-		return nil
-	}
-	remoteStack, err := gh.Stack(s.Number)
-	if err != nil || remoteStack == nil {
-		return nil
-	}
-	named := map[int]bool{}
-	for _, n := range numbers {
-		named[n] = true
-	}
-	var landed []int
-	for _, pr := range remoteStack.PullRequests {
-		if pr.IsMerged() && !named[pr.Number] {
-			landed = append(landed, pr.Number)
+// landedStack is what gh stack's tracking says has landed: each merged pull
+// request by its branch, and those of branches gone from the graph by the
+// branch they sit below, or above for those at the top of their stack.
+type landedStack struct {
+	merged       map[string]int
+	below, above map[string][]int
+}
+
+// landedPullRequests reads the merged pull requests gh stack's tracking keeps.
+func landedPullRequests(f *ghstack.File) landedStack {
+	out := landedStack{merged: map[string]int{}, below: map[string][]int{}, above: map[string][]int{}}
+	for _, s := range f.Stacks {
+		var pending []int
+		last := ""
+		for _, ref := range s.Branches {
+			if landed(ref) {
+				out.merged[ref.Branch] = ref.PullRequest.Number
+				pending = append(pending, ref.PullRequest.Number)
+				continue
+			}
+			out.below[ref.Branch] = pending
+			pending, last = nil, ref.Branch
+		}
+		if last != "" {
+			out.above[last] = pending
 		}
 	}
-	return landed
+	return out
+}
+
+// mergedSinceRecorded asks GitHub about the pull request gh stack's tracking
+// records for a branch with no open one, and returns its number when it has
+// merged since: a branch that has landed but that no sync has yet looked at.
+func mergedSinceRecorded(gh *forge.GH, f *ghstack.File, branch string) (int, bool) {
+	_, ref := f.Find(branch)
+	if ref == nil || ref.PullRequest == nil || ref.PullRequest.Number == 0 {
+		return 0, false
+	}
+	state, err := gh.PullRequestState(ref.PullRequest.Number)
+	if err != nil || state != "MERGED" {
+		return 0, false
+	}
+	return ref.PullRequest.Number, true
 }
 
 // currentStack finds the stack gh stack link names when it refuses a link that
@@ -219,11 +260,11 @@ var prRef = regexp.MustCompile(`#(\d+)`)
 // returns that stack's pull requests the link left out, bottom first, when
 // every one of them has merged. It returns nil for any other failure.
 //
-// It is the fallback for a stack landedPullRequests cannot see: one linked in
-// the browser or from another checkout and never recorded here, whose number
-// gh stack's tracking does not hold. gh stack link names the stack in its
-// refusal, and the pull requests' own states say whether the difference is
-// only what has landed.
+// It is the fallback for landed pull requests gh stack's tracking does not
+// hold: those of a stack linked in the browser or from another checkout, or
+// removed from the tracking before stk kept them there. gh stack link names
+// the stack in its refusal, and the pull requests' own states say whether the
+// difference is only what has landed.
 func refusedLanded(gh *forge.GH, err error, numbers []int) []int {
 	var ce *forge.CommandError
 	if !errors.As(err, &ce) || !strings.Contains(ce.Message, "Cannot update stack") {
@@ -237,7 +278,7 @@ func refusedLanded(gh *forge.GH, err error, numbers []int) []int {
 	for _, n := range numbers {
 		named[n] = true
 	}
-	var landed []int
+	var out []int
 	for _, ref := range prRef.FindAllStringSubmatch(m[1], -1) {
 		n, _ := strconv.Atoi(ref[1])
 		if named[n] {
@@ -247,9 +288,9 @@ func refusedLanded(gh *forge.GH, err error, numbers []int) []int {
 		if err != nil || state != "MERGED" {
 			return nil
 		}
-		landed = append(landed, n)
+		out = append(out, n)
 	}
-	return landed
+	return out
 }
 
 // syncGitHubStacks asks GitHub about the stacks stk tracks and brings them

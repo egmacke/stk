@@ -111,6 +111,10 @@ func adoptGHBranches(env *Env, g *stack.Graph, f *ghstack.File, untracked []stri
 		for _, ref := range s.Branches {
 			b := g.ByName[ref.Branch]
 			switch {
+			case landed(ref) && (b == nil || !b.Tracked):
+				// Kept in the stack by gh stack, but done with: nothing to
+				// adopt, and the branch above sits on whatever is below it.
+				continue
 			case b == nil:
 				// Not a local branch: nothing to adopt, and nothing above it
 				// can hang off it.
@@ -196,8 +200,14 @@ func ghChains(g *stack.Graph) []ghstack.Stack {
 }
 
 // projectGHStacks writes the graph into gh stack's shape, carrying over what
-// only gh stack knows: each branch's pull request, and each stack's identity
-// on GitHub.
+// only gh stack knows: each branch's pull request, each stack's identity on
+// GitHub, and the branches of the stack that have landed.
+//
+// A landed branch stays in gh stack's stack after it has left stk's graph,
+// because that is how gh stack keeps it: GitHub's stack goes on holding a
+// merged pull request, and gh stack link refuses to take one out. It keeps its
+// place below the branch that was above it, so the stack reads bottom first as
+// GitHub has it.
 //
 // A stack in the existing file is replaced by the projection when it holds
 // any branch stk tracks, or has just untracked. One holding none of those but
@@ -235,6 +245,30 @@ func projectGHStacks(g *stack.Graph, existing *ghstack.File, opts ghSyncOptions)
 		claimed[name] = true
 	}
 
+	// Landed branches stk no longer tracks, by the branch they sit below, or
+	// above for those at the top of their stack.
+	below := map[string][]ghstack.BranchRef{}
+	above := map[string][]ghstack.BranchRef{}
+	for _, s := range existing.Stacks {
+		var pending []ghstack.BranchRef
+		last := ""
+		for _, ref := range s.Branches {
+			name := ref.Branch
+			if now, ok := renamed[name]; ok {
+				name = now
+			}
+			if landed(ref) && !claimed[name] {
+				pending = append(pending, ref)
+				continue
+			}
+			below[name] = append(below[name], pending...)
+			pending, last = nil, name
+		}
+		if last != "" {
+			above[last] = append(above[last], pending...)
+		}
+	}
+
 	out := &ghstack.File{SchemaVersion: ghstack.SchemaVersion, Repository: existing.Repository, Stacks: []ghstack.Stack{}}
 	for _, chain := range ghChains(g) {
 		for i := range chain.Branches {
@@ -250,6 +284,13 @@ func projectGHStacks(g *stack.Graph, existing *ghstack.File, opts ghSyncOptions)
 		if s, ok := stacks[chain.Branches[0].Branch]; ok {
 			chain.ID, chain.Number = s.ID, s.Number
 		}
+		var refs []ghstack.BranchRef
+		for _, ref := range chain.Branches {
+			refs = append(refs, below[ref.Branch]...)
+			refs = append(refs, ref)
+			refs = append(refs, above[ref.Branch]...)
+		}
+		chain.Branches = refs
 		out.Stacks = append(out.Stacks, chain)
 	}
 	for _, s := range existing.Stacks {
@@ -343,6 +384,55 @@ func refreshGHPullRequests(env *Env) {
 		parts = append(parts, fmt.Sprintf("%d marked merged", merged))
 	}
 	env.Out.OK("gh stack tracking: %s", strings.Join(parts, ", "))
+}
+
+// landed reports whether gh stack records the branch's pull request as merged.
+func landed(ref ghstack.BranchRef) bool {
+	return ref.PullRequest != nil && ref.PullRequest.Merged
+}
+
+// recordLanded marks, in gh stack's tracking, the branches cleanup is about to
+// remove whose pull requests have merged, so the stack keeps them as gh stack
+// does once they are gone from the graph.
+//
+// The pull request comes from what cleanup has already learned where it can,
+// and is asked for only when gh stack has one recorded that cleanup did not
+// look at: a branch proven landed by its commits alone. Nothing here is fatal;
+// a stack missing a landed branch is what gh stack link's refusal reports.
+func recordLanded(env *Env, doomed []*stack.Branch, prs *prFinder) {
+	if !env.Cfg.GitHubStacks || env.DryRun {
+		return
+	}
+	f, err := ghstack.Load(env.Repo.CommonDir)
+	if err != nil {
+		return
+	}
+	changed := false
+	for _, b := range doomed {
+		_, ref := f.Find(b.Name)
+		if ref == nil || landed(*ref) {
+			continue
+		}
+		pr := prs.latest(b.Name)
+		if pr == nil && ref.PullRequest != nil {
+			if gh := prs.client(); gh != nil {
+				if state, err := gh.PullRequestState(ref.PullRequest.Number); err == nil && state == "MERGED" {
+					pr = &forge.PullRequest{Number: ref.PullRequest.Number, URL: ref.PullRequest.URL, State: state}
+				}
+			}
+		}
+		if pr == nil || !pr.IsMerged() {
+			continue
+		}
+		ref.PullRequest = &ghstack.PullRequest{Number: pr.Number, URL: pr.URL, Merged: true}
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if err := ghstack.Save(env.Repo.CommonDir, f); err != nil {
+		env.Out.Warnf("gh stack tracking not updated: %v", err)
+	}
 }
 
 func firstLine(err error) string {
@@ -465,7 +555,7 @@ func GHStackDrift(repo *git.Repo, g *stack.Graph) (string, error) {
 	for _, s := range existing.Stacks {
 		for _, ref := range s.Branches {
 			inGH[ref.Branch] = true
-			if !tracked[ref.Branch] && repo.BranchExists(ref.Branch) {
+			if !tracked[ref.Branch] && !landed(ref) && repo.BranchExists(ref.Branch) {
 				ghOnly = append(ghOnly, ref.Branch)
 			}
 		}

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/egmacke/stk/compare/v1.12.1...v1.13.0) (2026-10-26)
+
+
+### Features
+
+* undo the sync's restack when uncommitted changes would not go back cleanly ([#45](https://github.com/egmacke/stk/issues/45)) ([5e1e110](https://github.com/egmacke/stk/commit/5e1e110d9aefeccdca5d75f7917ded44c06e1dc0))
+
 ## [1.12.1](https://github.com/egmacke/stk/compare/v1.12.0...v1.12.1) (2026-10-26)
 
 

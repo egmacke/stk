@@ -3,6 +3,8 @@ package operations
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/egmacke/stk/internal/config"
@@ -149,7 +151,11 @@ func linkPullRequestChain(env *Env, gh *forge.GH, chain []*stack.Branch, prs *pu
 		env.Out.Dry("would link %s as a stack on GitHub", list)
 		return true, nil
 	}
-	if err := gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, numbers); err != nil {
+	err := gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, append(landedPullRequests(env, gh, chain, numbers), numbers...))
+	if landed := refusedLanded(gh, err, numbers); landed != nil {
+		err = gh.LinkStack(env.Cfg.Trunk, env.Cfg.Remote, append(landed, numbers...))
+	}
+	if err != nil {
 		var ce *forge.CommandError
 		if errors.As(err, &ce) && ce.ExitCode == forge.ExitStacksUnavailable {
 			return false, fmt.Errorf(
@@ -162,6 +168,88 @@ func linkPullRequestChain(env *Env, gh *forge.GH, chain []*stack.Branch, prs *pu
 	}
 	env.Out.OK(done, list)
 	return true, nil
+}
+
+// landedPullRequests returns the merged pull requests of the stack on GitHub
+// the chain is already linked as, bottom first, leaving out any the link names
+// itself.
+//
+// gh stack link refuses a link that would take a pull request out of a stack,
+// and a merged one is no exception, but stk drops a landed branch from its
+// graph and so from the chain. Once the bottom of a stack has merged on GitHub,
+// relinking what is left needs the landed pull requests named again beneath
+// it. A pull request that left the stack any other way is not added back:
+// that is a real difference, and gh stack's refusal says so.
+//
+// Nothing here is fatal: a stack stk cannot read is linked as before, and gh
+// stack link has the last word.
+func landedPullRequests(env *Env, gh *forge.GH, chain []*stack.Branch, numbers []int) []int {
+	f, err := ghstack.Load(env.Repo.CommonDir)
+	if err != nil {
+		return nil
+	}
+	s, _ := f.Find(chain[0].Name)
+	if s == nil || s.Number == 0 {
+		return nil
+	}
+	remoteStack, err := gh.Stack(s.Number)
+	if err != nil || remoteStack == nil {
+		return nil
+	}
+	named := map[int]bool{}
+	for _, n := range numbers {
+		named[n] = true
+	}
+	var landed []int
+	for _, pr := range remoteStack.PullRequests {
+		if pr.IsMerged() && !named[pr.Number] {
+			landed = append(landed, pr.Number)
+		}
+	}
+	return landed
+}
+
+// currentStack finds the stack gh stack link names when it refuses a link that
+// would take pull requests out of it: "Current stack: #1, #2, #3".
+var currentStack = regexp.MustCompile(`(?m)^Current stack: (.*)$`)
+
+var prRef = regexp.MustCompile(`#(\d+)`)
+
+// refusedLanded reads a refused link for the stack it would have changed, and
+// returns that stack's pull requests the link left out, bottom first, when
+// every one of them has merged. It returns nil for any other failure.
+//
+// It is the fallback for a stack landedPullRequests cannot see: one linked in
+// the browser or from another checkout and never recorded here, whose number
+// gh stack's tracking does not hold. gh stack link names the stack in its
+// refusal, and the pull requests' own states say whether the difference is
+// only what has landed.
+func refusedLanded(gh *forge.GH, err error, numbers []int) []int {
+	var ce *forge.CommandError
+	if !errors.As(err, &ce) || !strings.Contains(ce.Message, "Cannot update stack") {
+		return nil
+	}
+	m := currentStack.FindStringSubmatch(ce.Message)
+	if m == nil {
+		return nil
+	}
+	named := map[int]bool{}
+	for _, n := range numbers {
+		named[n] = true
+	}
+	var landed []int
+	for _, ref := range prRef.FindAllStringSubmatch(m[1], -1) {
+		n, _ := strconv.Atoi(ref[1])
+		if named[n] {
+			continue
+		}
+		state, err := gh.PullRequestState(n)
+		if err != nil || state != "MERGED" {
+			return nil
+		}
+		landed = append(landed, n)
+	}
+	return landed
 }
 
 // syncGitHubStacks asks GitHub about the stacks stk tracks and brings them

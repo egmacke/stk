@@ -416,3 +416,63 @@ func TestSyncDryRunReadsNoStacks(t *testing.T) {
 	requireContains(t, out, "would check the stacks on GitHub for changes made there")
 	requireNotContains(t, r.ghCallLog(), "/stacks/")
 }
+
+// gh stack link refuses a link that would leave out a pull request already in
+// the stack, merged ones included, so a stack whose bottom has landed is
+// relinked with the landed pull requests still at its bottom.
+
+func TestSyncRelinksAStackWhoseBottomMergedOnGitHub(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service", "ui")
+	r.stk("ss", "-pn")
+
+	r.mergePullRequest(1)
+
+	out := r.stk("sync", "--no-restack", "--cleanup")
+	requireNotContains(t, out, "Stacks on GitHub not updated")
+	requireContains(t, out, "#2, #3 are a stack on GitHub")
+	requireContains(t, r.ghCallLog(), "stack link --base main --remote origin 1 2 3")
+	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), "1 2 3", "the landed pull request kept")
+}
+
+func TestSubmitRelinksAStackWhoseBottomMergedOnGitHub(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service", "ui")
+	r.stk("ss", "-pn")
+
+	r.mergePullRequest(1)
+	r.stk("sync", "--no-restack", "--cleanup")
+	r.truncateGHCallLog()
+
+	out := r.stk("ss", "-u")
+	requireContains(t, out, "Linked #2, #3 as a stack on GitHub")
+	requireContains(t, r.ghCallLog(), "stack link --base main --remote origin 1 2 3")
+	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), "1 2 3", "the landed pull request kept")
+}
+
+func TestSyncRelinksAStackLinkedElsewhereWhoseBottomMerged(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service", "ui")
+	r.stk("ss", "-pn", "--no-link")
+	// Linked on GitHub itself, so this checkout has no number to look it up by.
+	r.linkOnGitHub(7, "main", 1, 2, 3)
+	r.mergePullRequest(1)
+
+	out := r.stk("sync", "--no-restack", "--cleanup")
+	requireNotContains(t, out, "Stacks on GitHub not updated")
+	requireContains(t, out, "#2, #3 are a stack on GitHub")
+	calls := r.ghCallLog()
+	requireContains(t, calls, "stack link --base main --remote origin 2 3")
+	requireContains(t, calls, "stack link --base main --remote origin 1 2 3")
+	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), "1 2 3", "the landed pull request kept")
+	requireEqual(t, r.ghStackNumbers()[0], 7, "the stack on GitHub is now recorded here")
+}
+
+func TestSubmitDoesNotRelinkOverAPullRequestRemovedOnGitHub(t *testing.T) {
+	r := githubStacksRepo(t, "api", "service", "ui")
+	r.stk("ss", "-pn", "--no-link")
+	// GitHub's stack holds a pull request that is still open but not here.
+	r.seedPullRequest(4, "elsewhere", "main")
+	r.linkOnGitHub(7, "main", 4, 1, 2, 3)
+
+	out := r.stkFail("ss", "-u")
+	requireContains(t, out, "this would remove #4 from the stack")
+	requireEqual(t, numbers(r.ghStubState().Stacks[0].PRs), "4 1 2 3", "GitHub's stack untouched")
+}

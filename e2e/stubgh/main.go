@@ -250,7 +250,25 @@ func linkStack(args []string) {
 				if have != n {
 					continue
 				}
-				// Additive only, as the real thing is.
+				// Additive only, as the real thing is: a link that leaves out
+				// a pull request already in the stack is refused, merged or
+				// not.
+				var dropped []string
+				for _, have := range s.Stacks[i].PRs {
+					if !contains(numbers, have) {
+						dropped = append(dropped, fmt.Sprintf("#%d", have))
+					}
+				}
+				if len(dropped) > 0 {
+					fmt.Fprintf(os.Stderr, "✗ Cannot update stack: this would remove %s from the stack\n", strings.Join(dropped, ", "))
+					var current []string
+					for _, have := range s.Stacks[i].PRs {
+						current = append(current, fmt.Sprintf("#%d", have))
+					}
+					fmt.Fprintf(os.Stderr, "Current stack: %s\n", strings.Join(current, ", "))
+					fmt.Fprintln(os.Stderr, "Include all existing PRs in the command to update the stack")
+					os.Exit(1)
+				}
 				for _, n := range numbers {
 					if !contains(s.Stacks[i].PRs, n) {
 						s.Stacks[i].PRs = append(s.Stacks[i].PRs, n)

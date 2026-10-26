@@ -1150,11 +1150,28 @@ command can be undone:
 | Command | On a conflicting restore |
 | --- | --- |
 | the ones that only switch: `create`, `checkout`, `show`, `up`, `down`, `top`, `bottom` | nothing is switched, so you keep your branch and your changes and the command fails — `create` leaves the new branch behind, unchecked out |
-| the ones that rewrite history: `move`, `restack`, `sync` | the rebases stand; the conflict is left in the working tree for you to resolve and the stash is kept as well, so nothing depends on that resolution |
+| `move`, `restack` | the operation pauses on it: the conflict is left in the working tree, and the changes stay parked. Resolve it, `git add` each file, and run `stk continue`; or run `stk abort` to undo every branch and get the changes back as they were |
+| `sync` | the restack is undone, and the changes go back exactly as they were. The rest of the sync stands, and `stk restack` then pauses on the conflict for you to resolve as above. On trunk, the fast-forward is undone too |
+
+```console
+$ stk sync
+...
+✓ Restored stashed changes, as they were
+stk: your uncommitted changes conflict with the restacked branches
+
+The restack was undone: every branch is back where it was, and your changes
+are back in the working tree as they were. The rest of the sync is done.
+
+Run stk restack to restack with your changes. It stops where they conflict,
+so you can resolve them and run stk continue
+```
 
 Changes parked for a restack belong to the operation, so a conflict does not
 strand them: `stk continue` restores them when the restack finishes, and
-`stk abort` restores them along with every branch. While an operation is
+`stk abort` restores them along with every branch. A sync that pauses on a
+conflict between branches is an ordinary paused restack: once you have
+resolved that, the changes are reconciled through `stk continue` as for
+`stk restack`. While an operation is
 paused they live in `refs/stk/autostash/<id>` rather than only in the stash
 reflog, and `stk doctor` reports any that a killed `stk` left behind.
 
@@ -1317,9 +1334,11 @@ commits belong to the branch.
   trunk included, only under `stk sync --all-worktrees`, inside the worktree
   that holds it, and never while that worktree has uncommitted changes or a
   git operation of its own in flight;
-- never loses your uncommitted changes: it parks them, puts them back, and
-  leaves them in the stash list if they will not reapply (`--no-autostash` to
-  refuse the operation instead);
+- never loses your uncommitted changes: it parks them and puts them back. If
+  they will not reapply, `stk sync` undoes its restack and puts them back as
+  they were, and `stk restack` pauses for you to resolve them through
+  `stk continue`. Anything that cannot be undone leaves them in the stash list
+  (`--no-autostash` refuses the operation instead);
 - never rewrites a branch whose recorded base cannot be validated;
 - never flattens merge commits without `--rebase-merges`;
 - never hides a git conflict;

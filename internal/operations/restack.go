@@ -103,17 +103,29 @@ type RestackOptions struct {
 	// such as move that must clear the working tree before they touch
 	// metadata. Restack parks its own when this is nil.
 	Stash *Autostash
+	// UndoOnStashConflict undoes the restack, instead of pausing, when the
+	// parked changes will not go back cleanly. TrunkBefore is where trunk
+	// stood before the caller fast-forwarded it here, so the undo can take it
+	// back too. Both are stk sync's.
+	UndoOnStashConflict bool
+	TrunkBefore         string
 }
 
 // Restack makes a portion of the stack graph internally consistent by rebasing
 // each branch onto its logical parent, parents before children.
-func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions) (Summary, error) {
+func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions) (sum Summary, err error) {
 	// Whatever the caller parked, or this function parks below, is put back
 	// here unless runPlan takes ownership of it.
 	stash := opts.Stash
 	journalled := false
 	defer func() {
-		if !journalled {
+		switch {
+		case journalled:
+		case opts.UndoOnStashConflict:
+			if undoErr := reapplyAfterSync(env, stash, nil, opts.TrunkBefore); err == nil {
+				err = undoErr
+			}
+		default:
 			stash.Restore(env)
 		}
 	}()
@@ -166,6 +178,9 @@ func Restack(env *Env, g *stack.Graph, target *stack.Branch, opts RestackOptions
 		DoneMessage:    opts.DoneMessage,
 		TrunkTip:       opts.TrunkTip,
 		AllWorktrees:   opts.AllWorktrees,
+
+		UndoOnStashConflict: opts.UndoOnStashConflict,
+		TrunkBefore:         opts.TrunkBefore,
 	}
 	op.applyTrunkTip(g)
 	op.AdoptAutostash(stash)
@@ -248,9 +263,14 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 	}
 
 	restoreOriginal(env, op)
+	// Back on the original branch, so the parked changes land where they were
+	// taken from. They go back before the journal is cleared, so a conflict
+	// can still pause, or undo, the whole operation.
+	restored, err := settleAutostash(env, op)
+	if err != nil {
+		return sum, err
+	}
 	if err := op.Clear(env.Repo); err != nil {
-		// The parked changes must not go down with the journal.
-		op.Autostash().Restore(env)
 		return sum, err
 	}
 	// Every rebase moved a base, which is the one thing gh stack records
@@ -267,10 +287,55 @@ func runPlan(env *Env, op *Operation, g *stack.Graph, start int) (Summary, error
 		env.Out.Printf("%s", summarise(sum))
 	}
 	warnOffStackBlocked(env, op, g, blocked, offStack)
-	// Back on the original branch, so the parked changes land where they were
-	// taken from.
-	op.Autostash().Restore(env)
+	if restored {
+		env.Out.OK("Restored stashed changes")
+	}
 	return sum, nil
+}
+
+// settleAutostash puts back the changes parked for a restack that has done
+// every branch, and reports whether there were any.
+//
+// When they conflict with the branch they go back onto, git's account of the
+// conflict is left in the working tree and the operation pauses on it, still
+// holding the changes: stk continue finishes once they are resolved, and stk
+// abort undoes the restack and puts them back as they were. For stk sync the
+// restack is undone at once instead.
+func settleAutostash(env *Env, op *Operation) (bool, error) {
+	a := op.Autostash()
+	if a == nil {
+		return false, nil
+	}
+	if op.UndoOnStashConflict {
+		// It reports for itself, and clears the journal on an undo.
+		if err := reapplyAfterSync(env, a, op, op.TrunkBefore); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	res := a.tryApply(env)
+	if res.OK() {
+		if err := a.Drop(env); err != nil {
+			env.Out.Warnf("%s could not remove %s: %v", git.ShortSHA(a.SHA), a.Ref, err)
+		}
+		return true, nil
+	}
+	op.Phase = PhaseAutostash
+	if err := op.Save(env.Repo); err != nil {
+		// Without a journal to pause on, the changes go where they cannot
+		// be lost.
+		a.Keep(env, "did not reapply cleanly")
+		return false, err
+	}
+	echoGit(env, res)
+	p := env.Out
+	p.Warnf("")
+	p.Warnf("Your uncommitted changes conflict with the restacked %s.", output.BranchName(env.Repo.CurrentBranch()))
+	p.Warnf("")
+	p.Warnf("Resolve the conflicts in the working tree, mark each file resolved with")
+	p.Warnf("git add, then run stk continue. Or run stk abort to undo the restack and")
+	p.Warnf("get your changes back as they were.")
+	return false, ErrConflict
 }
 
 func summarise(s Summary) string {

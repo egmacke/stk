@@ -123,7 +123,7 @@ func TestRestackAutostashSurvivesConflictAndContinue(t *testing.T) {
 	requireEqual(t, parkedStashes(r), 0, "no stash ref left behind")
 }
 
-func TestRestackAutostashKeepsChangesWhenRestoreConflicts(t *testing.T) {
+func TestRestackAutostashPausesWhenRestoreConflicts(t *testing.T) {
 	r := newRepo(t)
 	r.commit("f.txt", lines(5, nil), "five lines")
 	r.stk("create", "a")
@@ -140,15 +140,15 @@ func TestRestackAutostashKeepsChangesWhenRestoreConflicts(t *testing.T) {
 	r.write("f.txt", lines(5, map[int]string{1: "MINE"}))
 
 	res := r.stkAt(r.Root, "", "restack", "--autostash")
-	requireEqual(t, res.Code, 0, "the restack itself succeeded")
+	requireEqual(t, res.Code, 1, "the restack pauses on the parked changes")
 	// The conflict is git's to explain and the user's to resolve.
 	requireContains(t, res.All(), "CONFLICT")
-	requireContains(t, res.All(), "did not reapply cleanly")
-	requireContains(t, res.All(), "git stash pop")
+	requireContains(t, res.All(), "stk continue")
 	requireContains(t, r.fileContent("f.txt"), "MINE")
-	// Nothing rests on that resolution: the changes are in the stash too.
-	requireEqual(t, stashCount(r), 1, "the stash is kept as well")
-	requireEqual(t, parkedStashes(r), 0, "no stash ref left behind")
+	// Nothing rests on that resolution: the changes are still parked.
+	requireEqual(t, parkedStashes(r), 1, "the changes are held until the operation ends")
+	requireEqual(t, stashCount(r), 0, "nothing in the stash list")
+	requireEqual(t, r.log("b")[1], "a plus the first line", "b restacked")
 }
 
 func TestCheckoutAutostashCarriesChangesAcross(t *testing.T) {

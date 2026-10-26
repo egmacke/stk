@@ -71,7 +71,26 @@ type Operation struct {
 	AutostashSHA   string `json:"autostashSha,omitempty"`
 	AutostashRef   string `json:"autostashRef,omitempty"`
 	AutostashLabel string `json:"autostashLabel,omitempty"`
+	// Phase is PhaseAutostash once every branch is done and only the parked
+	// changes are left, conflicting with the branch they went back onto. stk
+	// continue then finishes once they are resolved, and stk abort undoes the
+	// restack and puts them back as they were.
+	Phase string `json:"phase,omitempty"`
+	// UndoOnStashConflict makes the operation undo itself, rather than pause,
+	// when the parked changes will not go back cleanly. stk sync sets it: a
+	// sync is not where the user expects to resolve their own changes, so it
+	// leaves them exactly as they were and says to restack instead. It is
+	// cleared once the user has resolved a conflict of the restack's own, as
+	// that work is not stk's to throw away.
+	UndoOnStashConflict bool `json:"undoOnStashConflict,omitempty"`
+	// TrunkBefore is where trunk stood before stk sync fast-forwarded it while
+	// it was checked out here, so an undo can take it back there too.
+	TrunkBefore string `json:"trunkBefore,omitempty"`
 }
+
+// PhaseAutostash marks an operation waiting on the user to resolve the parked
+// changes it put back.
+const PhaseAutostash = "autostash"
 
 // applyTrunkTip points the graph's trunk at the commit the operation
 // restacks onto, when that is not the local trunk.

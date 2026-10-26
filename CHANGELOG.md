@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/egmacke/stk/compare/v1.12.0...v1.12.1) (2026-10-26)
+
+
+### Bug fixes
+
+* keep merged pull requests in GitHub stacks, as gh stack does ([#43](https://github.com/egmacke/stk/issues/43)) ([7083117](https://github.com/egmacke/stk/commit/7083117b65ba99779ad0db8fbefe8eccc02fd659))
+
 ## [1.12.0](https://github.com/egmacke/stk/compare/v1.11.0...v1.12.0) (2026-10-20)
 
 

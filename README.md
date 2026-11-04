@@ -147,7 +147,7 @@ stk restack
 | Command | What it does |
 | --- | --- |
 | `stk init` | Record trunk and the default remote |
-| `stk create [branch] [--from <parent>]` | Create a branch and record its parent |
+| `stk create [branch] [--from <parent>]` | Create a branch and record its parent: the current branch when it is in a stack, otherwise trunk |
 | `stk checkout [branch] [-n\|-t <p>]`, `stk co` | Switch branches; interactive picker with no argument; fetches a branch only the remote has, and tracks an untracked one onto trunk |
 | `stk show` | The same viewer, without implying checkout is the goal |
 | `stk stack [--all] [--json]` | Print the current stack |
@@ -1205,7 +1205,28 @@ The following branches add nothing to main:
 ```
 
 A branch checked out *here* is stepped off first, so the one you are standing
-on when its pull request lands is pruned like any other. A branch checked out
+on when its pull request lands is pruned like any other. `stk` moves to the
+nearest branch below it that survives, usually trunk.
+
+When that branch is checked out in another worktree, git will not check it out
+here as well. `stk` detaches HEAD at its commit instead, and for trunk at the
+newer of the local and the remote trunk:
+
+```text
+✓ Detached HEAD at 4f0a564 (main is checked out in /home/you/work/repo)
+✓ Removed sc-123/api
+```
+
+From there, `stk create` starts a new stack from trunk. If you committed on the
+detached HEAD first, it asks whether the new branch should include those
+commits. To fail as git would
+instead, and leave the branch in place, turn detaching off:
+
+```bash
+git config stk.detachHead false
+```
+
+A branch checked out
 in another worktree is reported and left alone: deleting it would leave that
 worktree on a branch that no longer exists. See
 [Branches in other worktrees](#branches-in-other-worktrees).
@@ -1272,7 +1293,7 @@ Everything lives inside the repository and is shared by every worktree:
 
 | State | Where |
 | --- | --- |
-| trunk, default remote, autostash, GitHub stacks and PR title preferences, metadata version | `stk.*` in the repository git config |
+| trunk, default remote, autostash, GitHub stacks, PR title and detach HEAD preferences, metadata version | `stk.*` in the repository git config |
 | mirror of the graph for `gh stack` (opt-in) | `<git-common-dir>/gh-stack`, `gh stack`'s own file |
 | branch identity and logical parent | `branch.<name>.stk-id` / `.stk-parent` |
 | protected base commits | `refs/stk/base/<branch-id>` |

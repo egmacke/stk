@@ -34,6 +34,11 @@ const (
 	// the branch's first commit. It is the branch name unless the repository
 	// says otherwise.
 	KeyPRTitle = "stk.prTitle"
+	// KeyDetachHead lets stk leave this worktree on a detached HEAD when it
+	// has to step off a branch it is deleting and the branch it would land on
+	// is checked out in another worktree. It is on unless the repository says
+	// otherwise.
+	KeyDetachHead = "stk.detachHead"
 )
 
 // PRTitleSource names where a generated pull request title comes from.
@@ -49,6 +54,11 @@ const (
 // PRTitleDefault is what stk writes when the repository has expressed no
 // preference: the branch name, which is what stk has always used.
 const PRTitleDefault = PRTitleBranch
+
+// DetachHeadDefault is what stk does when the repository has expressed no
+// preference: detach rather than fail, since git will not check one branch out
+// in two worktrees.
+const DetachHeadDefault = true
 
 // GitHubStacksDefault is what stk does when the repository has expressed no
 // preference: the stack comment, which needs nothing beyond gh itself.
@@ -71,6 +81,11 @@ type Config struct {
 	// comes from. It defaults to the branch name; stk.prTitle = commit takes
 	// the subject of the branch's first commit instead.
 	PRTitle PRTitleSource
+	// DetachHead lets stk detach HEAD at the landing branch's commit when it
+	// steps off a deleted branch and the landing branch is held by another
+	// worktree. It defaults to true; stk.detachHead = false makes stk fail
+	// there instead, as git would.
+	DetachHead bool
 }
 
 // Load reads the configuration. ok is false when the repository has never been
@@ -108,6 +123,11 @@ func Load(repo *git.Repo) (cfg Config, ok bool, err error) {
 		return cfg, true, convErr
 	}
 	cfg.PRTitle = prTitle
+	detachHead, convErr := repo.ConfigBool(KeyDetachHead, DetachHeadDefault)
+	if convErr != nil {
+		return cfg, true, convErr
+	}
+	cfg.DetachHead = detachHead
 	if cfg.Trunk == "" {
 		return cfg, true, fmt.Errorf("%s is not set; run stk init", KeyTrunk)
 	}
@@ -116,9 +136,9 @@ func Load(repo *git.Repo) (cfg Config, ok bool, err error) {
 
 // Save writes the detected settings to the repository config.
 //
-// KeyAutostash, KeyGitHubStacks and KeyPRTitle are deliberately left alone:
-// they are standing preferences the user sets by hand, and re-running stk init
-// must not clear them.
+// KeyAutostash, KeyGitHubStacks, KeyPRTitle and KeyDetachHead are
+// deliberately left alone: they are standing preferences the user sets by
+// hand, and re-running stk init must not clear them.
 func Save(repo *git.Repo, cfg Config) error {
 	if err := repo.ConfigSet(KeyVersion, strconv.Itoa(cfg.Version)); err != nil {
 		return err

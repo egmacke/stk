@@ -100,6 +100,18 @@ func TestCreateFromNamedParent(t *testing.T) {
 	requireEqual(t, r.currentBranch(), "other", "current branch")
 }
 
+func TestCreateFromAnUntrackedBranchStartsFromTrunk(t *testing.T) {
+	r := newRepo(t)
+	r.git("switch", "-q", "-c", "loose")
+	r.commit("loose.txt", "loose\n", "loose work")
+
+	out := r.stk("create", "child")
+	requireContains(t, out, "loose is not in a stack, so child starts a new stack from main")
+	requireEqual(t, r.parentOf("child"), "main", "parent")
+	requireEqual(t, r.sha("child"), r.sha("main"), "starts from trunk")
+	requireEqual(t, r.baseOf("child"), r.sha("main"), "base")
+}
+
 func TestCreateRejectsUntrackedParent(t *testing.T) {
 	r := newRepo(t)
 	r.git("branch", "legacy", "main")

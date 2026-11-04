@@ -28,7 +28,9 @@ func newSyncCmd() *cobra.Command {
 			"checked out in another worktree is not moved, and the remote trunk is\n" +
 			"restacked onto instead. --all-worktrees does both inside the worktree\n" +
 			"that holds the branch, unless it has uncommitted changes or a git\n" +
-			"operation in progress.\n\n" +
+			"operation in progress. When the current branch is deleted and the\n" +
+			"branch to step onto is held by another worktree, HEAD is detached at its\n" +
+			"commit; stk.detachHead = false fails there instead.\n\n" +
 			"With stk.githubStacks on, sync also settles the stack on GitHub itself:\n" +
 			"it links the pull requests of each stack that runs from trunk to a tip\n" +
 			"without forking, which is how a stack linked outside this checkout — in\n" +

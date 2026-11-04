@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/egmacke/stk/internal/config"
 	"github.com/egmacke/stk/internal/git"
 	"github.com/egmacke/stk/internal/output"
 	"github.com/egmacke/stk/internal/stack"
@@ -280,7 +281,34 @@ func stepOffDoomedBranch(env *Env, g *stack.Graph, doomed []*stack.Branch) error
 	if landing == nil || landing.SHA == "" {
 		return fmt.Errorf("%s is checked out here and stk has nowhere to move to; check out another branch first", current)
 	}
+	if landing.CheckedOutElsewhere() {
+		return detachAt(env, landing)
+	}
 	return Switch(env, landing.Name)
+}
+
+// detachAt leaves this worktree on a detached HEAD at the commit of a branch
+// another worktree holds, since git will not check one branch out twice.
+//
+// For trunk it is the newer of the local and remote trunk: a trunk held by
+// another worktree is not moved by sync, so the remote one is usually ahead.
+func detachAt(env *Env, landing *stack.Branch) error {
+	if !env.Cfg.DetachHead {
+		return fmt.Errorf("%s is already checked out in:\n\n    %s\n\n"+
+			"Git does not allow this branch to be checked out here as well. Check out\n"+
+			"another branch first, or set %s true to let stk detach HEAD instead",
+			landing.Name, landing.Worktree, config.KeyDetachHead)
+	}
+	sha := landing.SHA
+	if landing.IsTrunk {
+		sha = freshestTrunk(env, landing)
+	}
+	if err := env.Repo.SwitchDetach(sha); err != nil {
+		return err
+	}
+	env.Out.OK("Detached HEAD at %s (%s is checked out in %s)",
+		git.ShortSHA(sha), output.BranchName(landing.Name), landing.Worktree)
+	return nil
 }
 
 // remoteBranch names one branch on one remote.

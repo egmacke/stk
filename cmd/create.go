@@ -16,6 +16,9 @@ func newCreateCmd() *cobra.Command {
 		Short:   "Create a branch and record its place in the stack",
 		Long: "Creates a branch whose logical parent is the current branch, or the branch\n" +
 			"named by --from. When no name is given stk asks for one.\n\n" +
+			"When HEAD is detached, or the current branch is not in a stack, the new\n" +
+			"branch starts a new stack from trunk: the newer of the local and remote\n" +
+			"trunk. Commits made on a detached HEAD are included only if you say so.\n\n" +
 			"The branch is created from the parent's ref rather than by checking the\n" +
 			"parent out, so --from works even when the parent is checked out in another\n" +
 			"worktree.",
@@ -49,7 +52,7 @@ func newCreateCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVarP(&from, "from", "f", "", "parent `branch` (defaults to the current branch)")
+	cmd.Flags().StringVarP(&from, "from", "f", "", "parent `branch` (defaults to the current branch, or trunk outside a stack)")
 	cmd.Flags().BoolVar(&noCheckout, "no-checkout", false, "create the branch without switching to it")
 	stash.register(cmd)
 	_ = cmd.RegisterFlagCompletionFunc("from", branchNameCompletion)

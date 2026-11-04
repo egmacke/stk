@@ -367,3 +367,111 @@ func TestSyncDryRunPlansWorktreesByFlag(t *testing.T) {
 	out = r.stk("--no-interactive", "sync", "--no-cleanup", "--dry-run", "--all-worktrees")
 	requireContains(t, out, "rebase onto api (in "+wt+")")
 }
+
+// landedInAnotherWorktree lands a branch on the remote trunk and leaves it
+// checked out in a linked worktree, with main held by the original one.
+func landedInAnotherWorktree(r *repo) string {
+	r.t.Helper()
+	r.stk("create", "merged")
+	r.commit("m.txt", "m\n", "merged work")
+	r.git("push", "-q", "origin", "merged:main")
+	r.stk("checkout", "main")
+	return r.addWorktree("wt-merged", "merged")
+}
+
+func TestSyncDetachesWhenTrunkIsInAnotherWorktree(t *testing.T) {
+	r := newRepoWithRemote(t)
+	wt := landedInAnotherWorktree(r)
+	mainTip := r.sha("main")
+
+	res := r.stkAt(wt, "", "--no-interactive", "sync", "--cleanup")
+	requireEqual(t, res.Code, 0, "sync from the linked worktree")
+	remoteTip := r.sha("origin/main")
+	requireContains(t, res.All(), "Detached HEAD at "+remoteTip[:7]+" (main is checked out in "+r.Root+")")
+	requireContains(t, res.All(), "Removed merged")
+	if r.branchExists("merged") {
+		t.Fatal("merged branch survived cleanup")
+	}
+	// Detached at the remote trunk, which sync did not move main onto.
+	requireEqual(t, r.gitAt(wt, "rev-parse", "HEAD"), remoteTip, "detached at the remote trunk")
+	requireEqual(t, r.sha("main"), mainTip, "main left where it was")
+	requireEqual(t, r.currentBranch(), "main", "original worktree still on main")
+}
+
+func TestSyncFailsWhenDetachingIsTurnedOff(t *testing.T) {
+	r := newRepoWithRemote(t)
+	wt := landedInAnotherWorktree(r)
+	r.git("config", "stk.detachHead", "false")
+
+	res := r.stkAt(wt, "", "--no-interactive", "sync", "--cleanup")
+	requireEqual(t, res.Code, 1, "sync from the linked worktree")
+	requireContains(t, res.All(), "main is already checked out in:")
+	requireContains(t, res.All(), "set stk.detachHead true")
+	if !r.branchExists("merged") {
+		t.Fatal("merged branch deleted although stk could not step off it")
+	}
+	requireEqual(t, r.gitAt(wt, "symbolic-ref", "--short", "HEAD"), "merged", "still on merged")
+}
+
+func TestCreateFromDetachedHeadStartsFromTheNewestTrunk(t *testing.T) {
+	r := newRepoWithRemote(t)
+	wt := landedInAnotherWorktree(r)
+	r.stkAt(wt, "", "--no-interactive", "sync", "--cleanup")
+
+	res := r.stkAt(wt, "", "create", "next")
+	requireEqual(t, res.Code, 0, "create from a detached HEAD")
+	requireContains(t, res.All(), "HEAD is detached, so next starts a new stack from main")
+	requireEqual(t, r.parentOf("next"), "main", "parent")
+	requireEqual(t, r.sha("next"), r.sha("origin/main"), "starts from the remote trunk")
+	requireEqual(t, r.baseOf("next"), r.sha("origin/main"), "base")
+	requireEqual(t, r.gitAt(wt, "symbolic-ref", "--short", "HEAD"), "next", "switched to next")
+}
+
+// commitOnDetachedHead lands a branch from a linked worktree, which leaves it
+// detached at the remote trunk, then commits there.
+func commitOnDetachedHead(r *repo) string {
+	r.t.Helper()
+	wt := landedInAnotherWorktree(r)
+	r.stkAt(wt, "", "--no-interactive", "sync", "--cleanup")
+	if err := os.WriteFile(filepath.Join(wt, "d.txt"), []byte("d\n"), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+	r.gitAt(wt, "add", "d.txt")
+	r.gitAt(wt, "commit", "-q", "-m", "detached work")
+	return wt
+}
+
+func TestCreateFromDetachedHeadKeepsCommitsWhenAsked(t *testing.T) {
+	r := newRepoWithRemote(t)
+	wt := commitOnDetachedHead(r)
+	head := r.gitAt(wt, "rev-parse", "HEAD")
+
+	res := r.stkAt(wt, "y\n", "--interactive", "create", "next")
+	requireEqual(t, res.Code, 0, "create from a detached HEAD")
+	requireContains(t, res.All(), "HEAD has 1 commit(s) that main does not. Include them in the new branch?")
+	requireEqual(t, r.sha("next"), head, "carries the detached commit")
+	requireEqual(t, r.parentOf("next"), "main", "parent")
+	requireEqual(t, r.baseOf("next"), r.sha("origin/main"), "base below the detached commit")
+}
+
+func TestCreateFromDetachedHeadLeavesCommitsWhenDeclined(t *testing.T) {
+	r := newRepoWithRemote(t)
+	wt := commitOnDetachedHead(r)
+
+	res := r.stkAt(wt, "n\n", "--interactive", "create", "next")
+	requireEqual(t, res.Code, 0, "create from a detached HEAD")
+	requireEqual(t, r.sha("next"), r.sha("origin/main"), "starts from the remote trunk")
+	requireEqual(t, r.baseOf("next"), r.sha("origin/main"), "base")
+}
+
+func TestCreateFromDetachedHeadWithCommitsNeedsAnAnswer(t *testing.T) {
+	r := newRepoWithRemote(t)
+	wt := commitOnDetachedHead(r)
+
+	res := r.stkAt(wt, "", "--no-interactive", "create", "next")
+	requireEqual(t, res.Code, 1, "create without a way to ask")
+	requireContains(t, res.All(), "stk cannot ask whether to keep them")
+	if r.branchExists("next") {
+		t.Fatal("branch created without an answer")
+	}
+}

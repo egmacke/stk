@@ -49,24 +49,56 @@ func parentID(parent *stack.Branch) string {
 }
 
 // currentStackParent returns the branch a new child should hang off when no
-// --from was given.
-func currentStackParent(g *stack.Graph) (*stack.Branch, error) {
+// --from was given: the current branch when it is trunk or in a stack, and
+// trunk otherwise. inStack is false in the second case.
+func currentStackParent(g *stack.Graph) (parent *stack.Branch, inStack bool, err error) {
 	if g.CurrentName == "" {
-		return nil, errors.New("HEAD is detached; use --from to name the parent branch")
+		return g.Trunk, false, nil
 	}
 	cur, ok := g.Resolve(g.CurrentName)
 	if !ok {
-		return nil, fmt.Errorf("branch %q is not known to stk", g.CurrentName)
+		return nil, false, fmt.Errorf("branch %q is not known to stk", g.CurrentName)
 	}
 	if cur.IsTrunk {
-		return cur, nil
+		return cur, true, nil
 	}
 	if !cur.Tracked {
-		return nil, fmt.Errorf(
-			"the current branch %q is not tracked by stk\n\nTrack it first:\n\n    stk track %s --parent <branch>",
-			cur.Name, cur.Name)
+		return g.Trunk, false, nil
 	}
-	return cur, nil
+	return cur, true, nil
+}
+
+// freshestTrunk returns the newer of the local and remote trunk.
+//
+// A trunk checked out in another worktree is not moved by sync, so a worktree
+// that does not hold it would otherwise build on a stale commit.
+func freshestTrunk(env *Env, trunk *stack.Branch) string {
+	remote, ok := env.Repo.RemoteBranchSHA(env.Cfg.Remote, trunk.Name)
+	if ok && (trunk.SHA == "" || env.Repo.IsAncestor(trunk.SHA, remote)) {
+		return remote
+	}
+	return trunk.SHA
+}
+
+// keepDetachedCommits asks whether a branch created from a detached HEAD should
+// carry the commits made there, which trunk does not have. It is false when
+// there are none.
+func keepDetachedCommits(env *Env, trunk *stack.Branch, trunkSHA string) (bool, error) {
+	others := []string{trunkSHA}
+	if trunk.SHA != "" && trunk.SHA != trunkSHA {
+		others = append(others, trunk.SHA)
+	}
+	n := env.Repo.CountUniqueCommits("HEAD", others)
+	if n == 0 {
+		return false, nil
+	}
+	if env.Confirm == nil {
+		return false, fmt.Errorf("HEAD has %d commit(s) that %s does not, and stk cannot ask whether to keep them\n\n"+
+			"Keep them:\n\n    git switch -c <branch>\n    stk track <branch> --parent %s\n\n"+
+			"Leave them behind:\n\n    stk create <branch> --from %s",
+			n, trunk.Name, trunk.Name, trunk.Name)
+	}
+	return env.Confirm(fmt.Sprintf("HEAD has %d commit(s) that %s does not. Include them in the new branch?", n, trunk.Name), true)
 }
 
 // CreateOptions configures stk create.
@@ -95,15 +127,41 @@ func Create(env *Env, g *stack.Graph, opts CreateOptions) error {
 
 	var parent *stack.Branch
 	var err error
+	inStack := true
 	if opts.From != "" {
 		parent, err = resolveParent(g, opts.From)
 	} else {
-		parent, err = currentStackParent(g)
+		parent, inStack, err = currentStackParent(g)
 	}
 	if err != nil {
 		return err
 	}
-	if parent.SHA == "" {
+	// Off any stack, the branch starts a new one from the newest trunk: the
+	// local one may be stale, held by a worktree sync does not move.
+	start, base := parent.SHA, parent.SHA
+	if !inStack {
+		start = freshestTrunk(env, parent)
+		base = start
+		if g.CurrentName == "" {
+			env.Out.Printf("HEAD is detached, so %s starts a new stack from %s", opts.Name, parent.Name)
+			keep, err := keepDetachedCommits(env, parent, start)
+			if err != nil {
+				return err
+			}
+			if keep {
+				if base, err = repo.MergeBase(start, "HEAD"); err != nil {
+					return fmt.Errorf("HEAD and %s have no common ancestor, so stk cannot tell which commits belong to %s",
+						parent.Name, opts.Name)
+				}
+				if start, err = repo.RevParse("HEAD"); err != nil {
+					return err
+				}
+			}
+		} else {
+			env.Out.Printf("%s is not in a stack, so %s starts a new stack from %s", g.CurrentName, opts.Name, parent.Name)
+		}
+	}
+	if start == "" {
 		return fmt.Errorf("branch %q has no commits to branch from", parent.Name)
 	}
 
@@ -115,13 +173,13 @@ func Create(env *Env, g *stack.Graph, opts CreateOptions) error {
 		env.Out.Printf("Would create %s from %s", opts.Name, parent.Name)
 		return nil
 	}
-	if err := repo.CreateBranch(opts.Name, "refs/heads/"+parent.Name); err != nil {
+	if err := repo.CreateBranch(opts.Name, start); err != nil {
 		return err
 	}
 	if err := stack.WriteMeta(repo, opts.Name, stack.Meta{ID: id, ParentID: parentID(parent)}); err != nil {
 		return err
 	}
-	if err := stack.SetBase(repo, id, parent.SHA); err != nil {
+	if err := stack.SetBase(repo, id, base); err != nil {
 		return err
 	}
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/egmacke/stk/compare/v1.13.0...v1.14.0) (2026-11-04)
+
+
+### Features
+
+* detach HEAD when sync steps off a branch onto one held by another worktree ([#47](https://github.com/egmacke/stk/issues/47)) ([dc132f9](https://github.com/egmacke/stk/commit/dc132f98b65b590c1ce960f2bd25a4ac0a554a4f))
+
 ## [1.13.0](https://github.com/egmacke/stk/compare/v1.12.1...v1.13.0) (2026-10-26)
 
 
